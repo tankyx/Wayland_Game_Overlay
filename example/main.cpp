@@ -1,5 +1,6 @@
-// Standalone demo: open the overlay on the largest output, paint a few boxes,
-// a line, a filled rect, and a stats line for ~3 s, then shut down.
+// Standalone demo: open the overlay on the largest output, paint boxes/shapes
+// and a stats line, register two app settings, open the interactive menu, and
+// print polled menu events until shutdown.
 #include <WaylandOverlay.h>
 
 #include <chrono>
@@ -65,7 +66,30 @@ int main() {
     overlay.setStats(3.2, 60);
     overlay.setSourceSize(1920, 1080);
 
-    std::this_thread::sleep_for(std::chrono::seconds(3));
+    // App-registered settings (slider + toggle) shown in the menu.
+    overlay.registerSetting(0, "Confidence", 0.0f, 1.0f, 0.05f, 0.5f);
+    overlay.registerSetting(1, "ESP", true);
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    if (overlay.setMenuVisible(true)) {
+        std::printf("[example] menu opened\n");
+    }
+
+    // Poll for menu events for ~5 s, then close and shut down.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        WaylandOverlay::MenuEvent ev;
+        while (overlay.pollMenuEvent(ev)) {
+            if (ev.type == WaylandOverlay::MenuEvent::Quit) {
+                std::printf("[example] Quit pressed\n");
+            } else if (ev.type == WaylandOverlay::MenuEvent::SettingChanged) {
+                std::printf("[example] setting %d = %.2f\n", ev.settingId, ev.value);
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    overlay.setMenuVisible(false);
     overlay.stop();
     return 0;
 }
