@@ -20,4 +20,9 @@ target_link_libraries(wayland_overlay PUBLIC PkgConfig::WAYLAND pthread)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     add_subdirectory(example)
+
+    enable_testing()
+    add_executable(raster_test tests/raster_test.cpp)
+    target_include_directories(raster_test PRIVATE src)
+    add_test(NAME raster_test COMMAND raster_test)
 endif()
