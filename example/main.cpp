@@ -22,10 +22,44 @@ int main() {
     };
     overlay.setDetections(boxes);
 
-    std::vector<WaylandOverlay::Shape> shapes = {
-        {WaylandOverlay::Shape::Filled, 100, 320, 260, 340, 0, 0xFF30FF30}, // bar
-        {WaylandOverlay::Shape::Line, 400, 450, 700, 600, 3.0f, 0xFFFF3030}, // line
-    };
+    std::vector<WaylandOverlay::Shape> shapes;
+    { // gradient bar (HP-style), green -> yellow, horizontal
+        WaylandOverlay::Shape s;
+        s.kind = WaylandOverlay::Shape::Filled;
+        s.x0 = 100; s.y0 = 320; s.x1 = 260; s.y1 = 340;
+        s.color = 0xFF30FF30; s.color2 = 0xFFFFDD33;
+        s.gradient = WaylandOverlay::Shape::Horizontal;
+        shapes.push_back(s);
+    }
+    { // thick line
+        WaylandOverlay::Shape s;
+        s.kind = WaylandOverlay::Shape::Line;
+        s.x0 = 400; s.y0 = 450; s.x1 = 700; s.y1 = 600;
+        s.thickness = 3.0f; s.color = 0xFFFF3030;
+        shapes.push_back(s);
+    }
+    { // ellipse with vertical gradient fill
+        WaylandOverlay::Shape s;
+        s.kind = WaylandOverlay::Shape::Ellipse;
+        s.x0 = 500; s.y0 = 200; s.x1 = 60; s.y1 = 40;
+        s.color = 0xFF4499FF; s.color2 = 0xFF33DDDD;
+        s.gradient = WaylandOverlay::Shape::Vertical;
+        shapes.push_back(s);
+    }
+    { // triangle
+        WaylandOverlay::Shape s;
+        s.kind = WaylandOverlay::Shape::Triangle;
+        s.pts = {800, 300, 900, 300, 850, 380};
+        s.color = 0xFFFF44FF;
+        shapes.push_back(s);
+    }
+    { // pentagon
+        WaylandOverlay::Shape s;
+        s.kind = WaylandOverlay::Shape::Polygon;
+        s.pts = {600, 500, 660, 470, 720, 500, 690, 560, 630, 560};
+        s.color = 0xFFFF9933;
+        shapes.push_back(s);
+    }
     overlay.setShapes(shapes);
 
     overlay.setStats(3.2, 60);
