@@ -192,28 +192,88 @@ void WaylandOverlay::seatCapabilities(void *data, wl_seat *seat, uint32_t caps) 
 void WaylandOverlay::pointerEnter(void *data, wl_pointer *, uint32_t, wl_surface *,
                                   int32_t x, int32_t y) {
     auto *self = static_cast<WaylandOverlay *>(data);
-    self->_ptrX = x;
-    self->_ptrY = y;
+    self->_ptrX = wl_fixed_to_int(x);
+    self->_ptrY = wl_fixed_to_int(y);
+    self->_menuHover = self->rowAt(self->_ptrX, self->_ptrY);
+    self->_scenePending = true;
 }
 
 void WaylandOverlay::pointerLeave(void *data, wl_pointer *, uint32_t, wl_surface *) {
-    (void)data;
+    auto *self = static_cast<WaylandOverlay *>(data);
+    self->_menuHover = -1;
+    self->_pointerDrag = false;
+    self->_scenePending = true;
 }
 
 void WaylandOverlay::pointerMotion(void *data, wl_pointer *, uint32_t, int32_t x, int32_t y) {
     auto *self = static_cast<WaylandOverlay *>(data);
-    self->_ptrX = x;
-    self->_ptrY = y;
+    self->_ptrX = wl_fixed_to_int(x);
+    self->_ptrY = wl_fixed_to_int(y);
+    if (self->_pointerDrag) {
+        self->setSliderFromX(self->_menuFocus, self->_ptrX);
+    } else {
+        self->_menuHover = self->rowAt(self->_ptrX, self->_ptrY);
+    }
+    self->_scenePending = true;
 }
 
-void WaylandOverlay::pointerButton(void *data, wl_pointer *, uint32_t, uint32_t, uint32_t,
-                                   uint32_t) {
-    (void)data; // interaction lands in Task 5
+void WaylandOverlay::pointerButton(void *data, wl_pointer *, uint32_t, uint32_t,
+                                   uint32_t button, uint32_t state) {
+    auto *self = static_cast<WaylandOverlay *>(data);
+    if (button != BTN_LEFT) return;
+    if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        const int idx = self->rowAt(self->_ptrX, self->_ptrY);
+        if (idx < 0) return; // click outside the menu -> falls through to the game
+        self->_menuFocus = idx;
+        const MenuItem &row = self->_menuRows[idx];
+        if (row.type == MenuItem::Slider) {
+            self->_pointerDrag = true;
+            self->setSliderFromX(idx, self->_ptrX);
+        } else {
+            self->activateRow(idx);
+        }
+    } else if (state == WL_POINTER_BUTTON_STATE_RELEASED) {
+        self->_pointerDrag = false;
+    }
+    self->_scenePending = true;
 }
 
-void WaylandOverlay::keyboardKey(void *data, wl_keyboard *, uint32_t, uint32_t, uint32_t,
-                                 uint32_t) {
-    (void)data; // interaction lands in Task 5
+void WaylandOverlay::keyboardKey(void *data, wl_keyboard *, uint32_t, uint32_t, uint32_t key,
+                                 uint32_t state) {
+    auto *self = static_cast<WaylandOverlay *>(data);
+    if (state != WL_KEYBOARD_KEY_STATE_PRESSED || !self->_menuVisible) return;
+    const MenuKey mk = menuKeyFor(key - 8);
+    switch (mk) {
+    case MenuKey::Up:
+        if (self->_menuFocus > 0) self->_menuFocus--;
+        break;
+    case MenuKey::Down:
+        if (self->_menuFocus < static_cast<int>(self->_menuRows.size()) - 1) self->_menuFocus++;
+        break;
+    case MenuKey::Left:
+    case MenuKey::Right: {
+        const int i = self->_menuFocus;
+        if (i >= 0 && i < static_cast<int>(self->_menuRows.size()) &&
+            self->_menuRows[i].type == MenuItem::Slider) {
+            MenuItem &row = self->_menuRows[i];
+            const float d = (mk == MenuKey::Left) ? -row.step : row.step;
+            row.value = clampStep(row.value + d, row.min, row.max, row.step);
+            self->commitRowValue(i);
+        }
+        break;
+    }
+    case MenuKey::Activate:
+        self->activateRow(self->_menuFocus);
+        break;
+    case MenuKey::Close:
+        self->_menuVisible = false;
+        self->applyInputRegion();
+        break;
+    case MenuKey::None:
+    default:
+        break;
+    }
+    self->_scenePending = true;
 }
 
 void WaylandOverlay::outputName(void *data, wl_output *, const char *name) {
@@ -971,6 +1031,64 @@ int WaylandOverlay::rowAt(int x, int y) const {
         top += kMenuRowH;
     }
     return -1;
+}
+
+void WaylandOverlay::enqueueEvent(MenuEvent e) {
+    std::lock_guard<std::mutex> lk(_eventMutex);
+    _events.push_back(e);
+}
+
+void WaylandOverlay::activateRow(int index) {
+    if (index < 0 || index >= static_cast<int>(_menuRows.size())) return;
+    MenuItem &row = _menuRows[index];
+    if (row.type == MenuItem::Toggle) {
+        row.value = row.value > 0.5f ? 0.0f : 1.0f;
+        commitRowValue(index);
+    } else if (row.type == MenuItem::Button) {
+        if (row.id == -5) {
+            enqueueEvent(MenuEvent{MenuEvent::Quit, -1, 0.0f});
+        } else if (row.id == -6) {
+            _menuVisible = false;
+            applyInputRegion();
+        }
+    }
+}
+
+void WaylandOverlay::commitRowValue(int index) {
+    MenuItem &row = _menuRows[index];
+    switch (row.id) {
+    case -1: _showBoxes = row.value > 0.5f; break;
+    case -2: _showShapes = row.value > 0.5f; break;
+    case -3: _showStats = row.value > 0.5f; break;
+    case -4: _opacity = row.value / 100.0f; break;
+    default:
+        if (row.id >= 0) {
+            for (auto &s : _settings) {
+                if (s.id == row.id) s.value = row.value;
+            }
+            {
+                std::lock_guard<std::mutex> lk(_stateMutex);
+                for (auto &s : _sharedSettings) {
+                    if (s.id == row.id) s.value = row.value;
+                }
+            }
+            enqueueEvent(MenuEvent{MenuEvent::SettingChanged, row.id, row.value});
+        }
+        break;
+    }
+}
+
+void WaylandOverlay::setSliderFromX(int index, int x) {
+    if (index < 0 || index >= static_cast<int>(_menuRows.size())) return;
+    MenuItem &row = _menuRows[index];
+    const int trackX = _menuX + kMenuPad + 9 * kTextAdvance;
+    const int trackEnd = _menuX + _menuW - kMenuPad;
+    float frac = (trackEnd > trackX)
+                     ? static_cast<float>(x - trackX) / static_cast<float>(trackEnd - trackX)
+                     : 0.0f;
+    frac = std::min(1.0f, std::max(0.0f, frac));
+    row.value = clampStep(row.min + frac * (row.max - row.min), row.min, row.max, row.step);
+    commitRowValue(index);
 }
 
 // ---------------------------------------------------------------------------

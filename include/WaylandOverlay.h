@@ -250,5 +250,7 @@ private:
     void applyInputRegion();
     int rowAt(int x, int y) const;
     void activateRow(int index);
+    void commitRowValue(int index);
+    void setSliderFromX(int index, int x);
     void enqueueEvent(MenuEvent e);
 };
