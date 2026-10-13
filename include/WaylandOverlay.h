@@ -53,16 +53,19 @@ public:
     ~WaylandOverlay();
 
     // Additive primitive on top of the detection boxes — same surface, buffer
-    // and damage plumbing, just two more shapes. Coordinates are in the same
-    // space as DetectionBox (source pixels); they are scaled to the surface
-    // with the same factor. Used for HP/shield bars and skeleton bones, which
-    // axis-aligned box outlines cannot express.
+    // and damage plumbing. Coordinates are in the same space as DetectionBox
+    // (source pixels); they are scaled to the surface with the same factor.
+    // Used for HP/shield bars, skeleton bones, and arbitrary overlays.
     struct Shape {
-        enum Kind { Filled, Line };
+        enum Kind { Filled, Line, Ellipse, Triangle, Polygon };
+        enum Gradient { None, Horizontal, Vertical };
         Kind kind = Filled;
-        float x0 = 0, y0 = 0, x1 = 0, y1 = 0; // Filled: rect corners; Line: endpoints
+        float x0 = 0, y0 = 0, x1 = 0, y1 = 0; // Filled: corners; Line: endpoints; Ellipse: center + rx,ry
         float thickness = 1.0f;               // Line only
-        uint32_t color = 0xFFFFFFFF;          // 0xAARRGGBB
+        uint32_t color  = 0xFFFFFFFF;         // 0xAARRGGBB
+        uint32_t color2 = 0xFFFFFFFF;         // gradient end color
+        Gradient gradient = None;
+        std::vector<float> pts;               // Triangle(6)/Polygon(2N): x,y pairs
     };
 
     WaylandOverlay(const WaylandOverlay &) = delete;

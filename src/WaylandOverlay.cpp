@@ -7,6 +7,7 @@
 #include <wayland-client.h>
 #include "wayland/xdg-shell-client-protocol.h"
 #include "wayland/wlr-layer-shell-unstable-v1-client-protocol.h"
+#include "raster.h"
 
 #include <poll.h>
 #include <sys/eventfd.h>
@@ -185,7 +186,7 @@ bool WaylandOverlay::initBuffer(Buffer &b, int w, int h) {
     const size_t stride = static_cast<size_t>(w) * 4;
     const size_t size = stride * static_cast<size_t>(h);
 
-    int fd = memfd_create("yolo-overlay", MFD_CLOEXEC);
+    int fd = memfd_create("wayland-overlay", MFD_CLOEXEC);
     if (fd < 0 || ftruncate(fd, static_cast<off_t>(size)) < 0) {
         std::cerr << "[WaylandOverlay] Failed to allocate shm buffer: "
                   << std::strerror(errno) << std::endl;
@@ -244,12 +245,12 @@ void WaylandOverlay::allocBuffers(int w, int h) {
 // ---------------------------------------------------------------------------
 
 wl_output *WaylandOverlay::pickOutput() const {
-    const char *envName = std::getenv("YOLO_OVERLAY_OUTPUT");
+    const char *envName = std::getenv("WAYLAND_OVERLAY_OUTPUT");
     if (envName && *envName) {
         for (auto *o : _outputs) {
             if (o->name == envName) return o->output;
         }
-        std::cerr << "[WaylandOverlay] YOLO_OVERLAY_OUTPUT='" << envName
+        std::cerr << "[WaylandOverlay] WAYLAND_OVERLAY_OUTPUT='" << envName
                   << "' not found; using default output" << std::endl;
     }
     // Prefer the output whose mode matches the captured screen size — that is
@@ -318,7 +319,7 @@ bool WaylandOverlay::initWayland() {
     wl_region_destroy(region);
 
     _layerSurface = zwlr_layer_shell_v1_get_layer_surface(
-        _layerShell, _surface, pickOutput(), ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "yolo-debug");
+        _layerShell, _surface, pickOutput(), ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wayland-overlay");
     if (!_layerSurface) {
         std::cerr << "[WaylandOverlay] Failed to create layer surface" << std::endl;
         return false;
@@ -573,11 +574,33 @@ void WaylandOverlay::paint(Buffer &buf) {
         m.x1 = s.x1 * sx;
         m.y1 = s.y1 * sy;
         m.thickness = s.thickness * ((sx + sy) * 0.5f);
+        for (size_t i = 0; i + 1 < m.pts.size(); i += 2) {
+            m.pts[i] *= sx;
+            m.pts[i + 1] *= sy;
+        }
+
+        float minX = std::min(m.x0, m.x1), maxX = std::max(m.x0, m.x1);
+        float minY = std::min(m.y0, m.y1), maxY = std::max(m.y0, m.y1);
+        if (m.kind == Shape::Ellipse) {
+            const float rx = std::fabs(m.x1), ry = std::fabs(m.y1);
+            minX = m.x0 - rx; maxX = m.x0 + rx;
+            minY = m.y0 - ry; maxY = m.y0 + ry;
+        } else if (m.kind == Shape::Triangle || m.kind == Shape::Polygon) {
+            if (!m.pts.empty()) {
+                minX = maxX = m.pts[0];
+                minY = maxY = m.pts[1];
+                for (size_t i = 2; i + 1 < m.pts.size(); i += 2) {
+                    minX = std::min(minX, m.pts[i]); maxX = std::max(maxX, m.pts[i]);
+                    minY = std::min(minY, m.pts[i + 1]); maxY = std::max(maxY, m.pts[i + 1]);
+                }
+            }
+        }
+
         shapes.push_back(m);
-        IntRect r{static_cast<int>(std::floor(std::min(m.x0, m.x1))) - 3,
-                  static_cast<int>(std::floor(std::min(m.y0, m.y1))) - 3,
-                  static_cast<int>(std::ceil(std::max(m.x0, m.x1))) + 3,
-                  static_cast<int>(std::ceil(std::max(m.y0, m.y1))) + 3};
+        IntRect r{static_cast<int>(std::floor(minX)) - 3,
+                  static_cast<int>(std::floor(minY)) - 3,
+                  static_cast<int>(std::ceil(maxX)) + 3,
+                  static_cast<int>(std::ceil(maxY)) + 3};
         scene.add(r);
     }
 
@@ -604,13 +627,39 @@ void WaylandOverlay::paint(Buffer &buf) {
 
     // Bars / bones on top of the boxes.
     for (const auto &s : shapes) {
-        if (s.kind == Shape::Line) {
+        const int axis = (s.gradient == Shape::Vertical) ? 1 : 0;
+        switch (s.kind) {
+        case Shape::Line:
             drawLine(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, s.thickness, s.color);
-        } else {
-            fillRect(buf.data, _width, _height, static_cast<int>(std::lround(s.x0)),
-                     static_cast<int>(std::lround(s.y0)),
-                     static_cast<int>(std::lround(s.x1 - s.x0)),
-                     static_cast<int>(std::lround(s.y1 - s.y0)), s.color);
+            break;
+        case Shape::Ellipse:
+            if (s.gradient != Shape::None) {
+                fillEllipseGradient(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1,
+                                    s.color, s.color2, axis);
+            } else {
+                fillEllipse(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, s.color);
+            }
+            break;
+        case Shape::Triangle:
+        case Shape::Polygon:
+            fillPolygon(buf.data, _width, _height, s.pts, s.color);
+            break;
+        case Shape::Filled:
+        default:
+            if (s.gradient != Shape::None) {
+                fillRectGradient(buf.data, _width, _height,
+                                 static_cast<int>(std::lround(s.x0)),
+                                 static_cast<int>(std::lround(s.y0)),
+                                 static_cast<int>(std::lround(s.x1 - s.x0)),
+                                 static_cast<int>(std::lround(s.y1 - s.y0)),
+                                 s.color, s.color2, axis);
+            } else {
+                fillRect(buf.data, _width, _height, static_cast<int>(std::lround(s.x0)),
+                         static_cast<int>(std::lround(s.y0)),
+                         static_cast<int>(std::lround(s.x1 - s.x0)),
+                         static_cast<int>(std::lround(s.y1 - s.y0)), s.color);
+            }
+            break;
         }
     }
 
