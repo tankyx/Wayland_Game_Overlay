@@ -16,7 +16,7 @@ struct MenuItem {
     float min = 0, max = 1, step = 1, value = 0;
 };
 
-enum class MenuKey { None, Up, Down, Left, Right, Activate, Close };
+enum class MenuKey { Unknown, Up, Down, Left, Right, Activate, Close };
 
 inline MenuKey menuKeyFor(uint32_t evdevKey) {
     switch (evdevKey) {
@@ -28,7 +28,7 @@ inline MenuKey menuKeyFor(uint32_t evdevKey) {
     case KEY_ENTER:
     case KEY_SPACE: return MenuKey::Activate;
     case KEY_TAB: return MenuKey::Down;
-    default: return MenuKey::None;
+    default: return MenuKey::Unknown;
     }
 }
 

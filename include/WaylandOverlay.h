@@ -65,14 +65,15 @@ public:
     // Used for HP/shield bars, skeleton bones, and arbitrary overlays.
     struct Shape {
         enum Kind { Filled, Line, Ellipse, Triangle, Polygon };
-        enum Gradient { None, Horizontal, Vertical };
+        enum Gradient { NoGradient, Horizontal, Vertical };
         Kind kind = Filled;
         float x0 = 0, y0 = 0, x1 = 0, y1 = 0; // Filled: corners; Line: endpoints; Ellipse: center + rx,ry
-        float thickness = 1.0f;               // Line only
+        float thickness = 1.0f;               // Line width; outline width when outline
         uint32_t color  = 0xFFFFFFFF;         // 0xAARRGGBB
         uint32_t color2 = 0xFFFFFFFF;         // gradient end color
-        Gradient gradient = None;
+        Gradient gradient = NoGradient;
         std::vector<float> pts;               // Triangle(6)/Polygon(2N): x,y pairs
+        bool outline = false;                 // stroke the boundary instead of filling
     };
 
     WaylandOverlay(const WaylandOverlay &) = delete;
@@ -96,8 +97,8 @@ public:
     // ---- Interactive menu ----
     // Event polled by the app (drain from your loop).
     struct MenuEvent {
-        enum Type { None, Quit, SettingChanged };
-        Type type = None;
+        enum Type { NoEvent, Quit, SettingChanged };
+        Type type = NoEvent;
         int settingId = -1;
         float value = 0.0f; // bool settings report 0.0 / 1.0
     };

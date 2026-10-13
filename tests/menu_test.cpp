@@ -26,7 +26,7 @@ int main() {
     check(menuKeyFor(KEY_ENTER) == MenuKey::Activate, "KEY_ENTER -> Activate");
     check(menuKeyFor(KEY_SPACE) == MenuKey::Activate, "KEY_SPACE -> Activate");
     check(menuKeyFor(KEY_TAB) == MenuKey::Down, "KEY_TAB -> Down");
-    check(menuKeyFor(KEY_A) == MenuKey::None, "KEY_A -> None");
+    check(menuKeyFor(KEY_A) == MenuKey::Unknown, "KEY_A -> Unknown");
 
     check(close(clampStep(0.5f, 0, 1, 0.1f), 0.5f), "clamp 0.5 on step");
     check(close(clampStep(0.23f, 0, 1, 0.1f), 0.2f), "clamp snap 0.23 -> 0.2");

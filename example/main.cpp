@@ -61,6 +61,15 @@ int main() {
         s.color = 0xFFFF9933;
         shapes.push_back(s);
     }
+    { // hollow circle (outline)
+        WaylandOverlay::Shape s;
+        s.kind = WaylandOverlay::Shape::Ellipse;
+        s.x0 = 200; s.y0 = 700; s.x1 = s.y1 = 40; // center + radius
+        s.thickness = 3.0f;
+        s.outline = true;
+        s.color = 0xFFFFFFFF;
+        shapes.push_back(s);
+    }
     overlay.setShapes(shapes);
 
     overlay.setStats(3.2, 60);

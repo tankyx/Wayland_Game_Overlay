@@ -101,14 +101,24 @@ unset, followed by the confidence).
 
 ```cpp
 struct Shape {
-    enum Kind { Filled, Line };
+    enum Kind { Filled, Line, Ellipse, Triangle, Polygon };
+    enum Gradient { NoGradient, Horizontal, Vertical };
     Kind kind = Filled;
-    float x0, y0, x1, y1;  // Filled: rect corners. Line: endpoints.
-    float thickness = 1.0f; // Line only
-    uint32_t color = 0xFFFFFFFF; // 0xAARRGGBB
+    float x0, y0, x1, y1;   // Filled: corners; Line: endpoints; Ellipse: center + radii
+    float thickness = 1.0f; // line/outline width
+    uint32_t color  = 0xFFFFFFFF; // 0xAARRGGBB
+    uint32_t color2 = 0xFFFFFFFF; // gradient end color
+    Gradient gradient = NoGradient;
+    std::vector<float> pts;  // Triangle(6)/Polygon(2N): x,y pairs
+    bool outline = false;    // stroke the boundary instead of filling
 };
 void setShapes(std::vector<Shape> shapes);
 ```
+
+Set `outline = true` to stroke any shape with `thickness` px instead of filling
+it (rect → border, ellipse → ring, triangle/polygon → thick closed outline).
+Outlines use solid `color`; gradients apply to fills only. `Line` ignores the
+flag (a line is already a stroke). A circle is an `Ellipse` with `x1 == y1`.
 
 Additive primitives (HP/shield bars, skeleton bones) that box outlines can't
 express. Painted on top of the boxes.

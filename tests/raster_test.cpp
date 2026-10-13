@@ -73,6 +73,31 @@ int main() {
         check(!any, "2-point polygon ignored");
     }
 
+    // 6. Ellipse outline: ring (center empty, boundary filled).
+    {
+        auto b = fresh();
+        fillEllipseOutline(b.data(), kW, kH, 16, 16, 8, 8, 2.0f, 0xFF00FF00);
+        check(at(b, 16, 16) == 0, "ellipse outline center empty");
+        check(at(b, 16, 8) == 0xFF00FF00, "ellipse outline boundary filled");
+    }
+
+    // 7. Rect outline: border filled, interior empty.
+    {
+        auto b = fresh();
+        fillRectOutline(b.data(), kW, kH, 0, 0, 32, 32, 2, 0xFF00FF00);
+        check(at(b, 0, 0) == 0xFF00FF00, "rect outline corner");
+        check(at(b, 0, 16) == 0xFF00FF00, "rect outline left edge");
+        check(at(b, 16, 16) == 0, "rect outline interior empty");
+    }
+
+    // 8. Polygon outline (triangle): edge filled, interior empty.
+    {
+        auto b = fresh();
+        strokePolygon(b.data(), kW, kH, {0.f, 0.f, 31.f, 0.f, 15.f, 31.f}, 2.0f, 0xFF00FFFF);
+        check(at(b, 15, 0) == 0xFF00FFFF, "polygon outline top edge");
+        check(at(b, 15, 10) == 0, "polygon outline interior empty");
+    }
+
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
         return 1;

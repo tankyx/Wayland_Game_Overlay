@@ -7,6 +7,35 @@
 #include <cstdint>
 #include <vector>
 
+inline void fillRect(uint32_t *px, int surfW, int surfH, int x, int y, int w, int h,
+                     uint32_t color) {
+    const int x0 = std::max(0, x), y0 = std::max(0, y);
+    const int x1 = std::min(surfW, x + w), y1 = std::min(surfH, y + h);
+    for (int row = y0; row < y1; ++row) {
+        uint32_t *line = px + static_cast<size_t>(row) * surfW;
+        for (int col = x0; col < x1; ++col) line[col] = color;
+    }
+}
+
+// Thick line via a square brush swept along the segment (software, no AA).
+inline void drawLine(uint32_t *px, int surfW, int surfH, float x0, float y0, float x1,
+                     float y1, float thickness, uint32_t color) {
+    const int half = std::max(1, static_cast<int>(thickness * 0.5f));
+    const float dx = x1 - x0, dy = y1 - y0;
+    const int steps = static_cast<int>(std::ceil(std::max(std::fabs(dx), std::fabs(dy))));
+    if (steps <= 0) {
+        fillRect(px, surfW, surfH, static_cast<int>(std::lround(x0)) - half,
+                 static_cast<int>(std::lround(y0)) - half, half * 2, half * 2, color);
+        return;
+    }
+    for (int s = 0; s <= steps; ++s) {
+        const float t = static_cast<float>(s) / static_cast<float>(steps);
+        const int x = static_cast<int>(std::lround(x0 + dx * t)) - half;
+        const int y = static_cast<int>(std::lround(y0 + dy * t)) - half;
+        fillRect(px, surfW, surfH, x, y, half * 2, half * 2, color);
+    }
+}
+
 inline uint32_t lerpColor(uint32_t a, uint32_t b, float t) {
     const auto lerp8 = [](uint32_t x, uint32_t y, float f) -> uint32_t {
         return static_cast<uint32_t>(
@@ -111,5 +140,51 @@ inline void fillPolygon(uint32_t *px, int surfW, int surfH,
             uint32_t *line = px + static_cast<size_t>(row) * surfW;
             for (int col = sx; col < ex; ++col) line[col] = color;
         }
+    }
+}
+
+// 4-sided rect border, thickness px wide.
+inline void fillRectOutline(uint32_t *px, int surfW, int surfH, int x, int y, int w,
+                            int h, int thickness, uint32_t color) {
+    const int t = std::max(1, thickness);
+    fillRect(px, surfW, surfH, x, y, w, t, color);              // top
+    fillRect(px, surfW, surfH, x, y + h - t, w, t, color);      // bottom
+    fillRect(px, surfW, surfH, x, y + t, t, h - 2 * t, color);  // left
+    fillRect(px, surfW, surfH, x + w - t, y + t, t, h - 2 * t, color); // right
+}
+
+// Ellipse ring: pixels inside (rx,ry) but outside (rx-t, ry-t).
+inline void fillEllipseOutline(uint32_t *px, int surfW, int surfH, float cx, float cy,
+                               float rx, float ry, float thickness, uint32_t color) {
+    const float rxx = std::max(1.0f, rx), ryy = std::max(1.0f, ry);
+    const float t = std::max(1.0f, thickness);
+    const float irx = std::max(1.0f, rxx - t), iry = std::max(1.0f, ryy - t);
+    const int x0 = std::max(0, static_cast<int>(std::floor(cx - rxx)));
+    const int x1 = std::min(surfW, static_cast<int>(std::ceil(cx + rxx)) + 1);
+    const int y0 = std::max(0, static_cast<int>(std::floor(cy - ryy)));
+    const int y1 = std::min(surfH, static_cast<int>(std::ceil(cy + ryy)) + 1);
+    for (int row = y0; row < y1; ++row) {
+        uint32_t *line = px + static_cast<size_t>(row) * surfW;
+        const float dy = (static_cast<float>(row) - cy) / ryy;
+        const float idy = (static_cast<float>(row) - cy) / iry;
+        for (int col = x0; col < x1; ++col) {
+            const float dx = (static_cast<float>(col) - cx) / rxx;
+            const float idx = (static_cast<float>(col) - cx) / irx;
+            const float d2 = dx * dx + dy * dy;
+            const float i2 = idx * idx + idy * idy;
+            if (d2 <= 1.0f && i2 >= 1.0f) line[col] = color;
+        }
+    }
+}
+
+// Closed thick polyline (one drawLine per edge).
+inline void strokePolygon(uint32_t *px, int surfW, int surfH, const std::vector<float> &pts,
+                          float thickness, uint32_t color) {
+    const size_t n = pts.size() / 2;
+    if (n < 3) return;
+    for (size_t i = 0; i < n; ++i) {
+        const size_t j = (i + 1) % n;
+        drawLine(px, surfW, surfH, pts[i * 2], pts[i * 2 + 1], pts[j * 2], pts[j * 2 + 1],
+                 thickness, color);
     }
 }

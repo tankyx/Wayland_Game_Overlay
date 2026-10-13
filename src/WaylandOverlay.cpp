@@ -269,7 +269,7 @@ void WaylandOverlay::keyboardKey(void *data, wl_keyboard *, uint32_t, uint32_t, 
         self->_menuVisible = false;
         self->applyInputRegion();
         break;
-    case MenuKey::None:
+    case MenuKey::Unknown:
     default:
         break;
     }
@@ -580,16 +580,6 @@ uint32_t dim(uint32_t color, float alpha) {
     return (color & 0x00FFFFFF) | (a << 24);
 }
 
-void fillRect(uint32_t *px, int surfW, int surfH, int x, int y, int w, int h,
-              uint32_t color) {
-    const int x0 = std::max(0, x), y0 = std::max(0, y);
-    const int x1 = std::min(surfW, x + w), y1 = std::min(surfH, y + h);
-    for (int row = y0; row < y1; ++row) {
-        uint32_t *line = px + static_cast<size_t>(row) * surfW;
-        for (int col = x0; col < x1; ++col) line[col] = color;
-    }
-}
-
 void clearRect(uint32_t *px, int surfW, const IntRect &r) {
     if (r.empty()) return;
     const size_t words = static_cast<size_t>(r.x1 - r.x0);
@@ -624,25 +614,6 @@ void drawText(uint32_t *px, int surfW, int surfH, int x, int y, const char *text
             }
         }
         x += kTextAdvance;
-    }
-}
-
-// Thick line via a square brush swept along the segment (software, no AA).
-void drawLine(uint32_t *px, int surfW, int surfH, float x0, float y0, float x1,
-              float y1, float thickness, uint32_t color) {
-    const int half = std::max(1, static_cast<int>(thickness * 0.5f));
-    const float dx = x1 - x0, dy = y1 - y0;
-    const int steps = static_cast<int>(std::ceil(std::max(std::fabs(dx), std::fabs(dy))));
-    if (steps <= 0) {
-        fillRect(px, surfW, surfH, static_cast<int>(std::lround(x0)) - half,
-                 static_cast<int>(std::lround(y0)) - half, half * 2, half * 2, color);
-        return;
-    }
-    for (int s = 0; s <= steps; ++s) {
-        const float t = static_cast<float>(s) / static_cast<float>(steps);
-        const int x = static_cast<int>(std::lround(x0 + dx * t)) - half;
-        const int y = static_cast<int>(std::lround(y0 + dy * t)) - half;
-        fillRect(px, surfW, surfH, x, y, half * 2, half * 2, color);
     }
 }
 
@@ -803,7 +774,10 @@ void WaylandOverlay::paint(Buffer &buf) {
                 drawLine(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, s.thickness, c);
                 break;
             case Shape::Ellipse:
-                if (s.gradient != Shape::None) {
+                if (s.outline) {
+                    fillEllipseOutline(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1,
+                                       s.thickness, c);
+                } else if (s.gradient != Shape::NoGradient) {
                     fillEllipseGradient(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, c, c2, axis);
                 } else {
                     fillEllipse(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, c);
@@ -811,11 +785,22 @@ void WaylandOverlay::paint(Buffer &buf) {
                 break;
             case Shape::Triangle:
             case Shape::Polygon:
-                fillPolygon(buf.data, _width, _height, s.pts, c);
+                if (s.outline) {
+                    strokePolygon(buf.data, _width, _height, s.pts, s.thickness, c);
+                } else {
+                    fillPolygon(buf.data, _width, _height, s.pts, c);
+                }
                 break;
             case Shape::Filled:
             default:
-                if (s.gradient != Shape::None) {
+                if (s.outline) {
+                    fillRectOutline(buf.data, _width, _height,
+                                    static_cast<int>(std::lround(s.x0)),
+                                    static_cast<int>(std::lround(s.y0)),
+                                    static_cast<int>(std::lround(s.x1 - s.x0)),
+                                    static_cast<int>(std::lround(s.y1 - s.y0)),
+                                    static_cast<int>(std::lround(s.thickness)), c);
+                } else if (s.gradient != Shape::NoGradient) {
                     fillRectGradient(buf.data, _width, _height,
                                      static_cast<int>(std::lround(s.x0)),
                                      static_cast<int>(std::lround(s.y0)),
