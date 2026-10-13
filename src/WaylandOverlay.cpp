@@ -858,3 +858,90 @@ void WaylandOverlay::setStats(double detectMs, int fps) {
     const uint64_t one = 1;
     (void)!write(_wakeFd, &one, sizeof(one));
 }
+
+// ---------------------------------------------------------------------------
+// Interactive menu — app-facing API
+// ---------------------------------------------------------------------------
+
+bool WaylandOverlay::setMenuVisible(bool visible) {
+    if (!_running.load(std::memory_order_relaxed)) return false;
+    {
+        std::lock_guard<std::mutex> lk(_stateMutex);
+        _sharedMenuVisible = visible;
+        _sharedGen.fetch_add(1, std::memory_order_release);
+    }
+    const uint64_t one = 1;
+    (void)!write(_wakeFd, &one, sizeof(one));
+    return visible;
+}
+
+void WaylandOverlay::registerSetting(int id, const std::string &name, bool initial) {
+    {
+        std::lock_guard<std::mutex> lk(_stateMutex);
+        MenuItem item;
+        item.type = MenuItem::Toggle;
+        item.id = id;
+        item.name = name;
+        item.min = 0.0f;
+        item.max = 1.0f;
+        item.step = 1.0f;
+        item.value = initial ? 1.0f : 0.0f;
+        bool found = false;
+        for (auto &s : _sharedSettings) {
+            if (s.id == id) { s = item; found = true; break; }
+        }
+        if (!found) _sharedSettings.push_back(std::move(item));
+        _sharedGen.fetch_add(1, std::memory_order_release);
+    }
+    if (_running.load(std::memory_order_relaxed)) {
+        const uint64_t one = 1;
+        (void)!write(_wakeFd, &one, sizeof(one));
+    }
+}
+
+void WaylandOverlay::registerSetting(int id, const std::string &name, float min,
+                                     float max, float step, float initial) {
+    {
+        std::lock_guard<std::mutex> lk(_stateMutex);
+        MenuItem item;
+        item.type = MenuItem::Slider;
+        item.id = id;
+        item.name = name;
+        item.min = min;
+        item.max = max;
+        item.step = step;
+        item.value = initial;
+        bool found = false;
+        for (auto &s : _sharedSettings) {
+            if (s.id == id) { s = item; found = true; break; }
+        }
+        if (!found) _sharedSettings.push_back(std::move(item));
+        _sharedGen.fetch_add(1, std::memory_order_release);
+    }
+    if (_running.load(std::memory_order_relaxed)) {
+        const uint64_t one = 1;
+        (void)!write(_wakeFd, &one, sizeof(one));
+    }
+}
+
+void WaylandOverlay::setSetting(int id, float value) {
+    {
+        std::lock_guard<std::mutex> lk(_stateMutex);
+        for (auto &s : _sharedSettings) {
+            if (s.id == id) { s.value = value; break; }
+        }
+        _sharedGen.fetch_add(1, std::memory_order_release);
+    }
+    if (_running.load(std::memory_order_relaxed)) {
+        const uint64_t one = 1;
+        (void)!write(_wakeFd, &one, sizeof(one));
+    }
+}
+
+bool WaylandOverlay::pollMenuEvent(MenuEvent &out) {
+    std::lock_guard<std::mutex> lk(_eventMutex);
+    if (_events.empty()) return false;
+    out = _events.front();
+    _events.pop_front();
+    return true;
+}

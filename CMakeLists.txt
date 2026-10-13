@@ -27,6 +27,6 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     add_test(NAME raster_test COMMAND raster_test)
 
     add_executable(menu_test tests/menu_test.cpp)
-    target_include_directories(menu_test PRIVATE src)
+    target_include_directories(menu_test PRIVATE include)
     add_test(NAME menu_test COMMAND menu_test)
 endif()

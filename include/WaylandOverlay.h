@@ -1,11 +1,14 @@
 #pragma once
 
 #include <atomic>
+#include <deque>
 #include <future>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "overlay_menu.h"
 
 // Forward declarations of the Wayland types we hold pointers to, so this
 // header stays usable without including wayland-client.h.
@@ -16,6 +19,10 @@ struct wl_shm;
 struct wl_surface;
 struct wl_buffer;
 struct wl_output;
+struct wl_seat;
+struct wl_pointer;
+struct wl_keyboard;
+struct wl_array;
 struct zwlr_layer_shell_v1;
 struct zwlr_layer_surface_v1;
 
@@ -86,6 +93,21 @@ public:
     // the constructor.
     void setSourceSize(int w, int h);
 
+    // ---- Interactive menu ----
+    // Event polled by the app (drain from your loop).
+    struct MenuEvent {
+        enum Type { None, Quit, SettingChanged };
+        Type type = None;
+        int settingId = -1;
+        float value = 0.0f; // bool settings report 0.0 / 1.0
+    };
+    bool setMenuVisible(bool visible); // returns resulting visibility; false if not running
+    void registerSetting(int id, const std::string &name, bool initial);
+    void registerSetting(int id, const std::string &name, float min, float max,
+                         float step, float initial);
+    void setSetting(int id, float value); // app pushes a value; slider reflects it
+    bool pollMenuEvent(MenuEvent &out);  // true if an event was dequeued
+
 private:
     struct Buffer {
         wl_buffer *buffer = nullptr;
@@ -113,6 +135,8 @@ private:
     std::vector<std::string> _sharedLabels; // guarded by _stateMutex
     double _sharedDetectMs = 0.0;           // guarded by _stateMutex
     int _sharedFps = 0;                     // guarded by _stateMutex
+    bool _sharedMenuVisible = false;        // guarded by _stateMutex
+    std::vector<MenuItem> _sharedSettings;  // guarded by _stateMutex
     std::atomic<uint64_t> _sharedGen{0};
     std::atomic<bool> _threadRun{false};
     std::atomic<bool> _running{false};
@@ -152,6 +176,24 @@ private:
     uint64_t _paintedGen = 0;
     bool _scenePending = false;
 
+    // ---- Menu state (render thread only) ----
+    bool _menuVisible = false;
+    int _menuFocus = 0, _menuHover = -1;
+    bool _pointerDrag = false;
+    std::vector<MenuItem> _settings;  // render snapshot of app settings
+    std::vector<MenuItem> _menuRows;  // built-ins + settings + buttons
+    bool _showBoxes = true, _showShapes = true, _showStats = true;
+    float _opacity = 1.0f;
+    int _menuX = 0, _menuY = 0, _menuW = 0, _menuH = 0;
+    int _ptrX = 0, _ptrY = 0;
+    wl_seat *_seat = nullptr;
+    wl_pointer *_pointer = nullptr;
+    wl_keyboard *_keyboard = nullptr;
+
+    // Poll queue for MenuEvent (guarded by _eventMutex, not _stateMutex).
+    std::mutex _eventMutex;
+    std::deque<MenuEvent> _events;
+
     // Wayland callbacks (all run on the render thread).
     static void registryGlobal(void *data, wl_registry *reg, uint32_t name,
                                const char *iface, uint32_t version);
@@ -167,6 +209,18 @@ private:
     static void outputScale(void *, wl_output *, int32_t) {}
     static void outputName(void *data, wl_output *, const char *name);
     static void outputDescription(void *, wl_output *, const char *) {}
+    static void seatCapabilities(void *data, wl_seat *seat, uint32_t caps);
+    static void seatName(void *, wl_seat *, const char *) {}
+    static void pointerEnter(void *data, wl_pointer *, uint32_t serial, wl_surface *, int32_t x, int32_t y);
+    static void pointerLeave(void *data, wl_pointer *, uint32_t serial, wl_surface *);
+    static void pointerMotion(void *data, wl_pointer *, uint32_t time, int32_t x, int32_t y);
+    static void pointerButton(void *data, wl_pointer *, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
+    static void pointerAxis(void *, wl_pointer *, uint32_t, uint32_t, int32_t) {}
+    static void keyboardKeymap(void *, wl_keyboard *, uint32_t, int, uint32_t) {}
+    static void keyboardEnter(void *, wl_keyboard *, uint32_t, wl_surface *, wl_array *) {}
+    static void keyboardLeave(void *, wl_keyboard *, uint32_t, wl_surface *) {}
+    static void keyboardKey(void *data, wl_keyboard *, uint32_t serial, uint32_t time, uint32_t key, uint32_t state);
+    static void keyboardModifiers(void *, wl_keyboard *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {}
 
     wl_output *pickOutput() const;
     bool initWayland();
@@ -179,4 +233,12 @@ private:
 
     void maybePaint();
     void paint(Buffer &buf);
+
+    // Menu helpers (render thread).
+    void rebuildRows();
+    void layoutMenu();
+    void applyInputRegion();
+    int rowAt(int x, int y) const;
+    void activateRow(int index);
+    void enqueueEvent(MenuEvent e);
 };

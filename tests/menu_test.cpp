@@ -1,5 +1,5 @@
 // Self-check for the pure menu helpers in src/menu.h. No Wayland, no framework.
-#include "menu.h"
+#include "overlay_menu.h"
 
 #include <cmath>
 #include <cstdio>
