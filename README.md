@@ -126,6 +126,46 @@ void setSourceSize(int w, int h);
   `paint()` maps boxes/shapes by `surface / source`. `0` (default) falls back
   to the size passed to the constructor.
 
+### Interactive menu
+
+A clickable settings panel the app opens with `setMenuVisible(true)`. While
+open, the panel's rectangle is the only clickable region — the rest of the
+overlay stays click-through — and it takes keyboard focus on-demand.
+
+```cpp
+overlay.registerSetting(0, "Confidence", 0.0f, 1.0f, 0.05f, 0.5f); // float slider
+overlay.registerSetting(1, "ESP", true);                            // bool toggle
+
+if (overlay.setMenuVisible(true)) {
+    // menu is open: Boxes / Shapes / Stats toggles, Opacity slider,
+    // your settings, and Quit + Close buttons.
+}
+
+WaylandOverlay::MenuEvent ev;
+while (overlay.pollMenuEvent(ev)) {
+    if (ev.type == WaylandOverlay::MenuEvent::Quit) { /* ... */ }
+    else if (ev.type == WaylandOverlay::MenuEvent::SettingChanged) {
+        std::printf("setting %d = %.2f\n", ev.settingId, ev.value);
+    }
+}
+
+overlay.setMenuVisible(false); // back to fully click-through
+```
+
+- `setMenuVisible(bool)` — open/close; returns the resulting state (false if
+  the overlay isn't running).
+- `registerSetting(id, name, bool)` / `registerSetting(id, name, min, max, step,
+  initial)` — add or replace a toggle/slider. Settings with the same `id` are
+  replaced.
+- `setSetting(id, value)` — push a value from your code; the slider reflects it.
+- `pollMenuEvent(MenuEvent&)` — drain one event: `Quit` or `SettingChanged`
+  (`settingId`, `value`; bools report `0.0`/`1.0`). Returns `false` when empty.
+- The built-in toggles and Opacity slider are applied internally (they gate
+  boxes/shapes/stats and scale alpha) and do **not** emit events.
+- Mouse: click a row to focus/activate, drag a slider. Keyboard: ↑/↓ move
+  focus, ←/→ adjust a slider, Enter/Space activate, Escape or Close dismisses.
+  (No text input, so no xkbcommon dependency.)
+
 ### Colors
 
 Detection-box `label` indexes an 8-color palette:
