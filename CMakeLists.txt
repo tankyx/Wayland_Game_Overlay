@@ -17,3 +17,7 @@ add_library(wayland_overlay STATIC
 )
 target_include_directories(wayland_overlay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(wayland_overlay PUBLIC PkgConfig::WAYLAND pthread)
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    add_subdirectory(example)
+endif()

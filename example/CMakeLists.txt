@@ -1,0 +1,2 @@
+add_executable(overlay_example main.cpp)
+target_link_libraries(overlay_example PRIVATE wayland_overlay)
