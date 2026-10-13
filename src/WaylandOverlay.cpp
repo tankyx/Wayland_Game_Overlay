@@ -144,7 +144,76 @@ void WaylandOverlay::registryGlobal(void *data, wl_registry *reg, uint32_t name,
         };
         wl_output_add_listener(op, &outputListener, info);
         self->_outputs.push_back(info);
+    } else if (std::strcmp(iface, wl_seat_interface.name) == 0) {
+        self->_seat = static_cast<wl_seat *>(
+            wl_registry_bind(reg, name, &wl_seat_interface, std::min(version, 7u)));
+        static const wl_seat_listener seatListener = {
+            &WaylandOverlay::seatCapabilities,
+            &WaylandOverlay::seatName,
+        };
+        wl_seat_add_listener(self->_seat, &seatListener, self);
     }
+}
+
+void WaylandOverlay::seatCapabilities(void *data, wl_seat *seat, uint32_t caps) {
+    auto *self = static_cast<WaylandOverlay *>(data);
+    if ((caps & WL_SEAT_CAPABILITY_POINTER) && !self->_pointer) {
+        self->_pointer = wl_seat_get_pointer(seat);
+        static const wl_pointer_listener pointerListener = {
+            &WaylandOverlay::pointerEnter,
+            &WaylandOverlay::pointerLeave,
+            &WaylandOverlay::pointerMotion,
+            &WaylandOverlay::pointerButton,
+            &WaylandOverlay::pointerAxis,
+            &WaylandOverlay::pointerFrame,
+            &WaylandOverlay::pointerAxisSource,
+            &WaylandOverlay::pointerAxisStop,
+            &WaylandOverlay::pointerAxisDiscrete,
+            &WaylandOverlay::pointerAxisValue120,
+            &WaylandOverlay::pointerAxisRelativeDirection,
+            &WaylandOverlay::pointerWarp,
+        };
+        wl_pointer_add_listener(self->_pointer, &pointerListener, self);
+    }
+    if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !self->_keyboard) {
+        self->_keyboard = wl_seat_get_keyboard(seat);
+        static const wl_keyboard_listener keyboardListener = {
+            &WaylandOverlay::keyboardKeymap,
+            &WaylandOverlay::keyboardEnter,
+            &WaylandOverlay::keyboardLeave,
+            &WaylandOverlay::keyboardKey,
+            &WaylandOverlay::keyboardModifiers,
+            &WaylandOverlay::keyboardRepeatInfo,
+        };
+        wl_keyboard_add_listener(self->_keyboard, &keyboardListener, self);
+    }
+}
+
+void WaylandOverlay::pointerEnter(void *data, wl_pointer *, uint32_t, wl_surface *,
+                                  int32_t x, int32_t y) {
+    auto *self = static_cast<WaylandOverlay *>(data);
+    self->_ptrX = x;
+    self->_ptrY = y;
+}
+
+void WaylandOverlay::pointerLeave(void *data, wl_pointer *, uint32_t, wl_surface *) {
+    (void)data;
+}
+
+void WaylandOverlay::pointerMotion(void *data, wl_pointer *, uint32_t, int32_t x, int32_t y) {
+    auto *self = static_cast<WaylandOverlay *>(data);
+    self->_ptrX = x;
+    self->_ptrY = y;
+}
+
+void WaylandOverlay::pointerButton(void *data, wl_pointer *, uint32_t, uint32_t, uint32_t,
+                                   uint32_t) {
+    (void)data; // interaction lands in Task 5
+}
+
+void WaylandOverlay::keyboardKey(void *data, wl_keyboard *, uint32_t, uint32_t, uint32_t,
+                                 uint32_t) {
+    (void)data; // interaction lands in Task 5
 }
 
 void WaylandOverlay::outputName(void *data, wl_output *, const char *name) {
@@ -379,6 +448,18 @@ void WaylandOverlay::teardown() {
     if (_compositor) {
         wl_compositor_destroy(_compositor);
         _compositor = nullptr;
+    }
+    if (_keyboard) {
+        wl_keyboard_destroy(_keyboard);
+        _keyboard = nullptr;
+    }
+    if (_pointer) {
+        wl_pointer_destroy(_pointer);
+        _pointer = nullptr;
+    }
+    if (_seat) {
+        wl_seat_destroy(_seat);
+        _seat = nullptr;
     }
     if (_registry) {
         wl_registry_destroy(_registry);

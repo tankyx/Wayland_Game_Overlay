@@ -216,11 +216,19 @@ private:
     static void pointerMotion(void *data, wl_pointer *, uint32_t time, int32_t x, int32_t y);
     static void pointerButton(void *data, wl_pointer *, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
     static void pointerAxis(void *, wl_pointer *, uint32_t, uint32_t, int32_t) {}
-    static void keyboardKeymap(void *, wl_keyboard *, uint32_t, int, uint32_t) {}
+    static void pointerFrame(void *, wl_pointer *) {}
+    static void pointerAxisSource(void *, wl_pointer *, uint32_t) {}
+    static void pointerAxisStop(void *, wl_pointer *, uint32_t, uint32_t) {}
+    static void pointerAxisDiscrete(void *, wl_pointer *, uint32_t, int32_t) {}
+    static void pointerAxisValue120(void *, wl_pointer *, uint32_t, int32_t) {}
+    static void pointerAxisRelativeDirection(void *, wl_pointer *, uint32_t, uint32_t) {}
+    static void pointerWarp(void *, wl_pointer *, int32_t, int32_t) {}
+    static void keyboardKeymap(void *, wl_keyboard *, uint32_t, int32_t, uint32_t) {}
     static void keyboardEnter(void *, wl_keyboard *, uint32_t, wl_surface *, wl_array *) {}
     static void keyboardLeave(void *, wl_keyboard *, uint32_t, wl_surface *) {}
     static void keyboardKey(void *data, wl_keyboard *, uint32_t serial, uint32_t time, uint32_t key, uint32_t state);
     static void keyboardModifiers(void *, wl_keyboard *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {}
+    static void keyboardRepeatInfo(void *, wl_keyboard *, int32_t, int32_t) {}
 
     wl_output *pickOutput() const;
     bool initWayland();
