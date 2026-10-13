@@ -507,6 +507,19 @@ constexpr int kTextScale = 2;                       // 5x7 -> 10x14 px
 constexpr int kTextAdvance = 6 * kTextScale;        // 5 glyph cols + 1 space
 constexpr int kTextHeight = 7 * kTextScale;
 
+// Menu geometry (surface pixels).
+constexpr int kMenuWidth = 320;
+constexpr int kMenuMargin = 16;
+constexpr int kMenuRowH = 28;
+constexpr int kMenuTitleH = 22;
+constexpr int kMenuPad = 8;
+
+uint32_t dim(uint32_t color, float alpha) {
+    if (alpha >= 1.0f) return color;
+    const uint32_t a = static_cast<uint32_t>(((color >> 24) & 0xFF) * alpha);
+    return (color & 0x00FFFFFF) | (a << 24);
+}
+
 void fillRect(uint32_t *px, int surfW, int surfH, int x, int y, int w, int h,
               uint32_t color) {
     const int x0 = std::max(0, x), y0 = std::max(0, y);
@@ -616,75 +629,83 @@ void WaylandOverlay::paint(Buffer &buf) {
         mapped.push_back(m);
     }
 
-    IntRect scene = statsRect;
-    for (const auto &b : mapped) {
-        if (!std::isfinite(b.x) || !std::isfinite(b.y) ||
-            !std::isfinite(b.w) || !std::isfinite(b.h)) continue;
+    IntRect scene;
+    if (_showStats) scene.add(statsRect);
+    if (_showBoxes) {
+        for (const auto &b : mapped) {
+            if (!std::isfinite(b.x) || !std::isfinite(b.y) ||
+                !std::isfinite(b.w) || !std::isfinite(b.h)) continue;
 
-        Item it;
-        it.box = &b;
-        it.color = labelColor(b.label);
-        const char *name = "?";
-        if (b.label >= 0 && static_cast<size_t>(b.label) < _labels.size()) {
-            name = _labels[static_cast<size_t>(b.label)].c_str();
+            Item it;
+            it.box = &b;
+            it.color = labelColor(b.label);
+            const char *name = "?";
+            if (b.label >= 0 && static_cast<size_t>(b.label) < _labels.size()) {
+                name = _labels[static_cast<size_t>(b.label)].c_str();
+            }
+            std::snprintf(it.label, sizeof(it.label), "%s %.2f", name,
+                          static_cast<double>(b.confidence));
+            it.labelLen = static_cast<int>(std::strlen(it.label));
+            it.tx = static_cast<int>(std::lround(b.x));
+            it.ty = static_cast<int>(std::lround(b.y)) - kTextHeight - 2;
+            if (it.ty < 0) it.ty = static_cast<int>(std::lround(b.y)) + 2; // inside the box
+            items.push_back(it);
+
+            IntRect r{static_cast<int>(std::floor(b.x)) - 3,
+                      static_cast<int>(std::floor(b.y)) - 3,
+                      static_cast<int>(std::ceil(b.x + b.w)) + 3,
+                      static_cast<int>(std::ceil(b.y + b.h)) + 3};
+            // +2: 1px text shadow + slack.
+            r.add(IntRect{it.tx, it.ty, it.tx + it.labelLen * kTextAdvance + 2,
+                          it.ty + kTextHeight + 2});
+            scene.add(r);
         }
-        std::snprintf(it.label, sizeof(it.label), "%s %.2f", name,
-                      static_cast<double>(b.confidence));
-        it.labelLen = static_cast<int>(std::strlen(it.label));
-        it.tx = static_cast<int>(std::lround(b.x));
-        it.ty = static_cast<int>(std::lround(b.y)) - kTextHeight - 2;
-        if (it.ty < 0) it.ty = static_cast<int>(std::lround(b.y)) + 2; // inside the box
-        items.push_back(it);
-
-        IntRect r{static_cast<int>(std::floor(b.x)) - 3,
-                  static_cast<int>(std::floor(b.y)) - 3,
-                  static_cast<int>(std::ceil(b.x + b.w)) + 3,
-                  static_cast<int>(std::ceil(b.y + b.h)) + 3};
-        // +2: 1px text shadow + slack.
-        r.add(IntRect{it.tx, it.ty, it.tx + it.labelLen * kTextAdvance + 2,
-                      it.ty + kTextHeight + 2});
-        scene.add(r);
     }
     // Extra primitives (HP/shield bars, skeleton bones) in the same source space.
     std::vector<Shape> shapes;
     shapes.reserve(_shapes.size());
-    for (const auto &s : _shapes) {
-        Shape m = s;
-        m.x0 = s.x0 * sx;
-        m.y0 = s.y0 * sy;
-        m.x1 = s.x1 * sx;
-        m.y1 = s.y1 * sy;
-        m.thickness = s.thickness * ((sx + sy) * 0.5f);
-        for (size_t i = 0; i + 1 < m.pts.size(); i += 2) {
-            m.pts[i] *= sx;
-            m.pts[i + 1] *= sy;
-        }
+    if (_showShapes) {
+        for (const auto &s : _shapes) {
+            Shape m = s;
+            m.x0 = s.x0 * sx;
+            m.y0 = s.y0 * sy;
+            m.x1 = s.x1 * sx;
+            m.y1 = s.y1 * sy;
+            m.thickness = s.thickness * ((sx + sy) * 0.5f);
+            for (size_t i = 0; i + 1 < m.pts.size(); i += 2) {
+                m.pts[i] *= sx;
+                m.pts[i + 1] *= sy;
+            }
 
-        float minX = std::min(m.x0, m.x1), maxX = std::max(m.x0, m.x1);
-        float minY = std::min(m.y0, m.y1), maxY = std::max(m.y0, m.y1);
-        if (m.kind == Shape::Ellipse) {
-            const float rx = std::fabs(m.x1), ry = std::fabs(m.y1);
-            minX = m.x0 - rx; maxX = m.x0 + rx;
-            minY = m.y0 - ry; maxY = m.y0 + ry;
-        } else if (m.kind == Shape::Triangle || m.kind == Shape::Polygon) {
-            if (!m.pts.empty()) {
-                minX = maxX = m.pts[0];
-                minY = maxY = m.pts[1];
-                for (size_t i = 2; i + 1 < m.pts.size(); i += 2) {
-                    minX = std::min(minX, m.pts[i]); maxX = std::max(maxX, m.pts[i]);
-                    minY = std::min(minY, m.pts[i + 1]); maxY = std::max(maxY, m.pts[i + 1]);
+            float minX = std::min(m.x0, m.x1), maxX = std::max(m.x0, m.x1);
+            float minY = std::min(m.y0, m.y1), maxY = std::max(m.y0, m.y1);
+            if (m.kind == Shape::Ellipse) {
+                const float rx = std::fabs(m.x1), ry = std::fabs(m.y1);
+                minX = m.x0 - rx; maxX = m.x0 + rx;
+                minY = m.y0 - ry; maxY = m.y0 + ry;
+            } else if (m.kind == Shape::Triangle || m.kind == Shape::Polygon) {
+                if (!m.pts.empty()) {
+                    minX = maxX = m.pts[0];
+                    minY = maxY = m.pts[1];
+                    for (size_t i = 2; i + 1 < m.pts.size(); i += 2) {
+                        minX = std::min(minX, m.pts[i]); maxX = std::max(maxX, m.pts[i]);
+                        minY = std::min(minY, m.pts[i + 1]); maxY = std::max(maxY, m.pts[i + 1]);
+                    }
                 }
             }
-        }
 
-        shapes.push_back(m);
-        IntRect r{static_cast<int>(std::floor(minX)) - 3,
-                  static_cast<int>(std::floor(minY)) - 3,
-                  static_cast<int>(std::ceil(maxX)) + 3,
-                  static_cast<int>(std::ceil(maxY)) + 3};
-        scene.add(r);
+            shapes.push_back(m);
+            IntRect r{static_cast<int>(std::floor(minX)) - 3,
+                      static_cast<int>(std::floor(minY)) - 3,
+                      static_cast<int>(std::ceil(maxX)) + 3,
+                      static_cast<int>(std::ceil(maxY)) + 3};
+            scene.add(r);
+        }
     }
 
+    if (_menuVisible && _menuW > 0) {
+        scene.add(IntRect{_menuX, _menuY, _menuX + _menuW, _menuY + _menuH});
+    }
     scene.clamp(_width, _height);
 
     // Clear: this buffer's stale pixels (from 2 frames ago) union the new scene.
@@ -695,52 +716,103 @@ void WaylandOverlay::paint(Buffer &buf) {
     clearRect(buf.data, _width, clearR);
 
     // Stats line (black shadow + white text).
-    drawText(buf.data, _width, _height, 9, 9, stats, 0xFF000000);
-    drawText(buf.data, _width, _height, 8, 8, stats, 0xFFFFFFFF);
+    if (_showStats) {
+        drawText(buf.data, _width, _height, 9, 9, stats, dim(0xFF000000, _opacity));
+        drawText(buf.data, _width, _height, 8, 8, stats, dim(0xFFFFFFFF, _opacity));
+    }
 
     // Detection boxes + labels.
-    for (const auto &it : items) {
-        const DetectionBox &b = *it.box;
-        drawBox(buf.data, _width, _height, b.x, b.y, b.w, b.h, it.color);
-        drawText(buf.data, _width, _height, it.tx + 1, it.ty + 1, it.label, 0xFF000000);
-        drawText(buf.data, _width, _height, it.tx, it.ty, it.label, it.color);
+    if (_showBoxes) {
+        for (const auto &it : items) {
+            const DetectionBox &b = *it.box;
+            const uint32_t c = dim(it.color, _opacity);
+            drawBox(buf.data, _width, _height, b.x, b.y, b.w, b.h, c);
+            drawText(buf.data, _width, _height, it.tx + 1, it.ty + 1, it.label, dim(0xFF000000, _opacity));
+            drawText(buf.data, _width, _height, it.tx, it.ty, it.label, c);
+        }
     }
 
     // Bars / bones on top of the boxes.
-    for (const auto &s : shapes) {
-        const int axis = (s.gradient == Shape::Vertical) ? 1 : 0;
-        switch (s.kind) {
-        case Shape::Line:
-            drawLine(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, s.thickness, s.color);
-            break;
-        case Shape::Ellipse:
-            if (s.gradient != Shape::None) {
-                fillEllipseGradient(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1,
-                                    s.color, s.color2, axis);
-            } else {
-                fillEllipse(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, s.color);
+    if (_showShapes) {
+        for (const auto &s : shapes) {
+            const int axis = (s.gradient == Shape::Vertical) ? 1 : 0;
+            const uint32_t c = dim(s.color, _opacity);
+            const uint32_t c2 = dim(s.color2, _opacity);
+            switch (s.kind) {
+            case Shape::Line:
+                drawLine(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, s.thickness, c);
+                break;
+            case Shape::Ellipse:
+                if (s.gradient != Shape::None) {
+                    fillEllipseGradient(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, c, c2, axis);
+                } else {
+                    fillEllipse(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, c);
+                }
+                break;
+            case Shape::Triangle:
+            case Shape::Polygon:
+                fillPolygon(buf.data, _width, _height, s.pts, c);
+                break;
+            case Shape::Filled:
+            default:
+                if (s.gradient != Shape::None) {
+                    fillRectGradient(buf.data, _width, _height,
+                                     static_cast<int>(std::lround(s.x0)),
+                                     static_cast<int>(std::lround(s.y0)),
+                                     static_cast<int>(std::lround(s.x1 - s.x0)),
+                                     static_cast<int>(std::lround(s.y1 - s.y0)),
+                                     c, c2, axis);
+                } else {
+                    fillRect(buf.data, _width, _height, static_cast<int>(std::lround(s.x0)),
+                             static_cast<int>(std::lround(s.y0)),
+                             static_cast<int>(std::lround(s.x1 - s.x0)),
+                             static_cast<int>(std::lround(s.y1 - s.y0)), c);
+                }
+                break;
             }
-            break;
-        case Shape::Triangle:
-        case Shape::Polygon:
-            fillPolygon(buf.data, _width, _height, s.pts, s.color);
-            break;
-        case Shape::Filled:
-        default:
-            if (s.gradient != Shape::None) {
-                fillRectGradient(buf.data, _width, _height,
-                                 static_cast<int>(std::lround(s.x0)),
-                                 static_cast<int>(std::lround(s.y0)),
-                                 static_cast<int>(std::lround(s.x1 - s.x0)),
-                                 static_cast<int>(std::lround(s.y1 - s.y0)),
-                                 s.color, s.color2, axis);
-            } else {
-                fillRect(buf.data, _width, _height, static_cast<int>(std::lround(s.x0)),
-                         static_cast<int>(std::lround(s.y0)),
-                         static_cast<int>(std::lround(s.x1 - s.x0)),
-                         static_cast<int>(std::lround(s.y1 - s.y0)), s.color);
+        }
+    }
+
+    // Interactive menu (drawn last, on top; full opacity).
+    if (_menuVisible && _menuW > 0) {
+        fillRect(buf.data, _width, _height, _menuX, _menuY, _menuW, _menuH, 0xE0000000);
+        drawBox(buf.data, _width, _height, _menuX, _menuY, _menuW, _menuH, 0xFFAAAAAA);
+        drawText(buf.data, _width, _height, _menuX + kMenuPad, _menuY + kMenuPad, "Overlay", 0xFFFFFFFF);
+
+        const int rx = _menuX + kMenuPad;
+        int ty = _menuY + kMenuPad + kMenuTitleH;
+        for (size_t i = 0; i < _menuRows.size(); ++i) {
+            const MenuItem &row = _menuRows[i];
+            const bool focused = (static_cast<int>(i) == _menuFocus);
+            const bool hovered = (static_cast<int>(i) == _menuHover);
+            if (focused) {
+                fillRect(buf.data, _width, _height, rx - 2, ty - 2, _menuW - 2 * kMenuPad + 4, kMenuRowH - 2, 0x30FFFFFF);
+            } else if (hovered) {
+                fillRect(buf.data, _width, _height, rx - 2, ty - 2, _menuW - 2 * kMenuPad + 4, kMenuRowH - 2, 0x18FFFFFF);
             }
-            break;
+
+            char label[128];
+            if (row.type == MenuItem::Toggle) {
+                std::snprintf(label, sizeof(label), "%s: %s", row.name.c_str(),
+                              row.value > 0.5f ? "ON" : "OFF");
+            } else if (row.type == MenuItem::Slider) {
+                std::snprintf(label, sizeof(label), "%s: %.0f", row.name.c_str(), row.value);
+            } else {
+                std::snprintf(label, sizeof(label), "%s", row.name.c_str());
+            }
+            drawText(buf.data, _width, _height, rx, ty + 6, label, 0xFFFFFFFF);
+
+            if (row.type == MenuItem::Slider) {
+                const int trackMid = ty + 6 + kTextHeight / 2;
+                const int trackX = rx + 9 * kTextAdvance;
+                const int trackEnd = _menuX + _menuW - kMenuPad;
+                fillRect(buf.data, _width, _height, trackX, trackMid - 1, trackEnd - trackX, 2, 0xFF888888);
+                float frac = (row.max > row.min) ? (row.value - row.min) / (row.max - row.min) : 0.0f;
+                frac = std::min(1.0f, std::max(0.0f, frac));
+                const int thumbX = trackX + static_cast<int>(frac * (trackEnd - trackX - 8));
+                fillRect(buf.data, _width, _height, thumbX, trackMid - 6, 8, 12, 0xFFFFFFFF);
+            }
+            ty += kMenuRowH;
         }
     }
 
@@ -795,6 +867,22 @@ void WaylandOverlay::maybePaint() {
         }
         _scenePending = true;
     }
+    if (_sharedMenuGen.load(std::memory_order_acquire) != _menuGen) {
+        bool visChanged = false;
+        {
+            std::lock_guard<std::mutex> lk(_stateMutex);
+            visChanged = (_sharedMenuVisible != _menuVisible);
+            _menuVisible = _sharedMenuVisible;
+            _settings = _sharedSettings;
+            _menuGen = _sharedMenuGen.load(std::memory_order_relaxed);
+        }
+        rebuildRows();
+        if (visChanged) {
+            layoutMenu();
+            applyInputRegion();
+        }
+        _scenePending = true;
+    }
     if (!_scenePending) return;
 
     // Prefer a free buffer that is not the one currently on screen (avoids
@@ -818,6 +906,71 @@ void WaylandOverlay::maybePaint() {
 
     paint(*buf);
     _scenePending = false;
+}
+
+// ---------------------------------------------------------------------------
+// Menu model + input region (render thread)
+// ---------------------------------------------------------------------------
+
+void WaylandOverlay::rebuildRows() {
+    _menuRows.clear();
+    _menuRows.reserve(_settings.size() + 6);
+    auto push = [&](MenuItem::Type type, int id, const char *name, float min, float max,
+                    float step, float value) {
+        MenuItem m;
+        m.type = type;
+        m.id = id;
+        m.name = name;
+        m.min = min;
+        m.max = max;
+        m.step = step;
+        m.value = value;
+        _menuRows.push_back(std::move(m));
+    };
+    push(MenuItem::Toggle, -1, "Boxes", 0, 1, 1, _showBoxes ? 1.0f : 0.0f);
+    push(MenuItem::Toggle, -2, "Shapes", 0, 1, 1, _showShapes ? 1.0f : 0.0f);
+    push(MenuItem::Toggle, -3, "Stats", 0, 1, 1, _showStats ? 1.0f : 0.0f);
+    push(MenuItem::Slider, -4, "Opacity", 0, 100, 1, _opacity * 100.0f);
+    for (const auto &s : _settings) _menuRows.push_back(s);
+    push(MenuItem::Button, -5, "Quit", 0, 0, 0, 0);
+    push(MenuItem::Button, -6, "Close", 0, 0, 0, 0);
+    if (_menuFocus >= static_cast<int>(_menuRows.size()))
+        _menuFocus = static_cast<int>(_menuRows.size()) - 1;
+    if (_menuFocus < 0) _menuFocus = 0;
+}
+
+void WaylandOverlay::layoutMenu() {
+    _menuW = kMenuWidth;
+    _menuH = kMenuPad * 2 + kMenuTitleH + static_cast<int>(_menuRows.size()) * kMenuRowH;
+    _menuX = _width - _menuW - kMenuMargin;
+    _menuY = kMenuMargin;
+}
+
+void WaylandOverlay::applyInputRegion() {
+    if (!_surface || !_compositor) return;
+    wl_region *region = wl_compositor_create_region(_compositor);
+    if (_menuVisible) {
+        wl_region_add(region, _menuX, _menuY, _menuW, _menuH);
+    }
+    wl_surface_set_input_region(_surface, region);
+    wl_region_destroy(region);
+    if (_layerSurface) {
+        zwlr_layer_surface_v1_set_keyboard_interactivity(
+            _layerSurface,
+            _menuVisible ? ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND
+                         : ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
+    }
+}
+
+int WaylandOverlay::rowAt(int x, int y) const {
+    if (!_menuVisible) return -1;
+    if (x < _menuX + kMenuPad || x >= _menuX + _menuW - kMenuPad) return -1;
+    int top = _menuY + kMenuPad + kMenuTitleH;
+    for (size_t i = 0; i < _menuRows.size(); ++i) {
+        if (y >= top && y < top + kMenuRowH) return static_cast<int>(i);
+        top += kMenuRowH;
+    }
+    return -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -949,7 +1102,7 @@ bool WaylandOverlay::setMenuVisible(bool visible) {
     {
         std::lock_guard<std::mutex> lk(_stateMutex);
         _sharedMenuVisible = visible;
-        _sharedGen.fetch_add(1, std::memory_order_release);
+        _sharedMenuGen.fetch_add(1, std::memory_order_release);
     }
     const uint64_t one = 1;
     (void)!write(_wakeFd, &one, sizeof(one));
@@ -972,7 +1125,7 @@ void WaylandOverlay::registerSetting(int id, const std::string &name, bool initi
             if (s.id == id) { s = item; found = true; break; }
         }
         if (!found) _sharedSettings.push_back(std::move(item));
-        _sharedGen.fetch_add(1, std::memory_order_release);
+        _sharedMenuGen.fetch_add(1, std::memory_order_release);
     }
     if (_running.load(std::memory_order_relaxed)) {
         const uint64_t one = 1;
@@ -997,7 +1150,7 @@ void WaylandOverlay::registerSetting(int id, const std::string &name, float min,
             if (s.id == id) { s = item; found = true; break; }
         }
         if (!found) _sharedSettings.push_back(std::move(item));
-        _sharedGen.fetch_add(1, std::memory_order_release);
+        _sharedMenuGen.fetch_add(1, std::memory_order_release);
     }
     if (_running.load(std::memory_order_relaxed)) {
         const uint64_t one = 1;
@@ -1011,7 +1164,7 @@ void WaylandOverlay::setSetting(int id, float value) {
         for (auto &s : _sharedSettings) {
             if (s.id == id) { s.value = value; break; }
         }
-        _sharedGen.fetch_add(1, std::memory_order_release);
+        _sharedMenuGen.fetch_add(1, std::memory_order_release);
     }
     if (_running.load(std::memory_order_relaxed)) {
         const uint64_t one = 1;

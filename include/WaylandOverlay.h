@@ -138,6 +138,7 @@ private:
     bool _sharedMenuVisible = false;        // guarded by _stateMutex
     std::vector<MenuItem> _sharedSettings;  // guarded by _stateMutex
     std::atomic<uint64_t> _sharedGen{0};
+    std::atomic<uint64_t> _sharedMenuGen{0};
     std::atomic<bool> _threadRun{false};
     std::atomic<bool> _running{false};
     int _wakeFd = -1; // eventfd; detection thread pokes it on publish
@@ -177,6 +178,7 @@ private:
     bool _scenePending = false;
 
     // ---- Menu state (render thread only) ----
+    uint64_t _menuGen = 0;
     bool _menuVisible = false;
     int _menuFocus = 0, _menuHover = -1;
     bool _pointerDrag = false;
