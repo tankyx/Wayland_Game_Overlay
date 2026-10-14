@@ -14,6 +14,7 @@ add_library(wayland_overlay STATIC
     src/WaylandOverlay.cpp
     src/wayland/xdg-shell-protocol.c
     src/wayland/wlr-layer-shell-unstable-v1-protocol.c
+    src/wayland/fractional-scale-v1-protocol.c
 )
 target_include_directories(wayland_overlay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(wayland_overlay PUBLIC PkgConfig::WAYLAND pthread)

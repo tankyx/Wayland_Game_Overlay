@@ -23,6 +23,8 @@ struct wl_seat;
 struct wl_pointer;
 struct wl_keyboard;
 struct wl_array;
+struct wp_fractional_scale_manager_v1;
+struct wp_fractional_scale_v1;
 struct zwlr_layer_shell_v1;
 struct zwlr_layer_surface_v1;
 
@@ -95,8 +97,15 @@ public:
     void setSourceSize(int w, int h);
 
     // Pin the overlay to a window rect (monitor-relative physical pixels)
-    // instead of filling the whole output. Call before start().
+    // instead of filling the whole output. Callable at any time, from any
+    // thread; setWindowRect(0,0,0,0) clears the pin and returns to the
+    // full-output fill path.
     void setWindowRect(int x, int y, int w, int h);
+
+    // Connector name of the output the overlay surface is bound to (e.g.
+    // "HDMI-A-1"). Valid after start(); the surface cannot change outputs, so
+    // the caller should recreate the overlay if the game moves monitors.
+    std::string outputName() const { return _chosenName; }
 
     // ---- Interactive menu ----
     // Event polled by the app (drain from your loop).
@@ -145,6 +154,9 @@ private:
     std::vector<MenuItem> _sharedSettings;  // guarded by _stateMutex
     std::atomic<uint64_t> _sharedGen{0};
     std::atomic<uint64_t> _sharedMenuGen{0};
+    bool _sharedWinRect = false;       // guarded by _stateMutex
+    int _sharedWinX = 0, _sharedWinY = 0, _sharedWinW = 0, _sharedWinH = 0; // guarded
+    std::atomic<uint64_t> _sharedWinGen{0};
     std::atomic<bool> _threadRun{false};
     std::atomic<bool> _running{false};
     int _wakeFd = -1; // eventfd; detection thread pokes it on publish
@@ -161,9 +173,19 @@ private:
     std::vector<OutputInfo *> _outputs;
     int _preferredW = 0; // captured output size, for pickOutput()
     int _preferredH = 0;
-    int _outputScale = 1; // wl_output.scale of the chosen output
-    bool _winRect = false; // setWindowRect() set -> pin to a window
+    // Scale (render thread). _logicalScale drives physical->logical conversions;
+    // _bufferScale = ceil(_logicalScale) drives buffer sizing and buffer_scale.
+    float _logicalScale = 1.0f;
+    int _bufferScale = 1;
+    // Chosen output (render thread, set in initWayland).
+    std::string _chosenName;
+    int _chosenW = 0, _chosenH = 0; // physical mode of the chosen output
+    // Window rect (render-thread snapshot of _sharedWin*).
+    bool _winRect = false;
     int _winX = 0, _winY = 0, _winW = 0, _winH = 0; // monitor-relative physical px
+    uint64_t _winGen = 0;
+    wp_fractional_scale_manager_v1 *_fractionalScaleManager = nullptr;
+    wp_fractional_scale_v1 *_fractionalScale = nullptr;
 
     std::atomic<int> _sourceW{0}; // setSourceSize(); 0 = use _preferred* above
     std::atomic<int> _sourceH{0};
@@ -219,6 +241,7 @@ private:
     static void outputDone(void *, wl_output *) {}
     static void outputScale(void *data, wl_output *, int32_t scale);
     static void outputName(void *data, wl_output *, const char *name);
+    static void fractionalPreferredScale(void *data, wp_fractional_scale_v1 *, uint32_t scale);
     static void outputDescription(void *, wl_output *, const char *) {}
     static void seatCapabilities(void *data, wl_seat *seat, uint32_t caps);
     static void seatName(void *, wl_seat *, const char *) {}
@@ -242,6 +265,8 @@ private:
     static void keyboardRepeatInfo(void *, wl_keyboard *, int32_t, int32_t) {}
 
     OutputInfo *pickOutput() const;
+    void applyWindowRect();
+    bool coversWholeOutput() const;
     bool initWayland();
     void teardown();
     void threadMain();

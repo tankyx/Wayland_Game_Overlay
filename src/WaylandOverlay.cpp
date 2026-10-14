@@ -7,6 +7,7 @@
 #include <wayland-client.h>
 #include "wayland/xdg-shell-client-protocol.h"
 #include "wayland/wlr-layer-shell-unstable-v1-client-protocol.h"
+#include "wayland/fractional-scale-v1-client-protocol.h"
 #include "raster.h"
 
 #include <poll.h>
@@ -152,7 +153,18 @@ void WaylandOverlay::registryGlobal(void *data, wl_registry *reg, uint32_t name,
             &WaylandOverlay::seatName,
         };
         wl_seat_add_listener(self->_seat, &seatListener, self);
+    } else if (std::strcmp(iface, wp_fractional_scale_manager_v1_interface.name) == 0) {
+        // Optional: present on compositors with fractional-scale support.
+        // Absent => _logicalScale falls back to the integer wl_output.scale.
+        self->_fractionalScaleManager = static_cast<wp_fractional_scale_manager_v1 *>(
+            wl_registry_bind(reg, name, &wp_fractional_scale_manager_v1_interface, 1));
     }
+}
+
+void WaylandOverlay::fractionalPreferredScale(void *data, wp_fractional_scale_v1 *,
+                                              uint32_t scale) {
+    auto *self = static_cast<WaylandOverlay *>(data);
+    if (scale > 0) self->_logicalScale = static_cast<float>(scale) / 120.0f;
 }
 
 void WaylandOverlay::seatCapabilities(void *data, wl_seat *seat, uint32_t caps) {
@@ -297,8 +309,8 @@ void WaylandOverlay::layerConfigure(void *data, zwlr_layer_surface_v1 *ls,
     auto *self = static_cast<WaylandOverlay *>(data);
     zwlr_layer_surface_v1_ack_configure(ls, serial);
     if (w > 0 && h > 0 &&
-        (static_cast<int>(w) * self->_outputScale != self->_width ||
-         static_cast<int>(h) * self->_outputScale != self->_height)) {
+        (static_cast<int>(w) * self->_bufferScale != self->_width ||
+         static_cast<int>(h) * self->_bufferScale != self->_height)) {
         self->allocBuffers(static_cast<int>(w), static_cast<int>(h));
     }
     self->_configured = true;
@@ -366,10 +378,11 @@ void WaylandOverlay::destroyBuffer(Buffer &b) {
 }
 
 void WaylandOverlay::allocBuffers(int w, int h) {
-    const int pw = w * _outputScale; // physical buffer size
-    const int ph = h * _outputScale;
+    const int pw = w * _bufferScale; // physical buffer size
+    const int ph = h * _bufferScale;
     std::cout << "[WaylandOverlay] Layer surface configured: " << w << "x" << h
-              << " (scale " << _outputScale << " -> " << pw << "x" << ph << " px)" << std::endl;
+              << " (buffer scale " << _bufferScale << " -> " << pw << "x" << ph << " px)"
+              << std::endl;
     for (auto &b : _buffers) destroyBuffer(b);
     _lastAttached = nullptr;
     _width = pw;
@@ -418,6 +431,33 @@ WaylandOverlay::OutputInfo *WaylandOverlay::pickOutput() const {
     return best; // nullptr lets the compositor decide (typically the focused output).
 }
 
+void WaylandOverlay::applyWindowRect() {
+    if (!_layerSurface) return;
+    if (_winRect && !coversWholeOutput()) {
+        zwlr_layer_surface_v1_set_anchor(_layerSurface,
+                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
+        zwlr_layer_surface_v1_set_margin(
+            _layerSurface, static_cast<int>(std::lroundf(_winY / _logicalScale)), 0, 0,
+            static_cast<int>(std::lroundf(_winX / _logicalScale)));
+        zwlr_layer_surface_v1_set_size(
+            _layerSurface, static_cast<int>(std::lroundf(_winW / _logicalScale)),
+            static_cast<int>(std::lroundf(_winH / _logicalScale)));
+    } else {
+        zwlr_layer_surface_v1_set_anchor(_layerSurface,
+                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
+                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
+        zwlr_layer_surface_v1_set_size(_layerSurface, 0, 0);
+    }
+}
+
+bool WaylandOverlay::coversWholeOutput() const {
+    return _chosenW > 0 && _chosenH > 0 && _winX == 0 && _winY == 0 &&
+           _winW == _chosenW && _winH == _chosenH;
+}
+
 bool WaylandOverlay::initWayland() {
     _display = wl_display_connect(nullptr);
     if (!_display) {
@@ -444,21 +484,37 @@ bool WaylandOverlay::initWayland() {
         return false;
     }
 
-    // Pick the output (and its scale) before creating the surface so buffers
-    // are sized correctly for HiDPI.
+    // Pick the output; record its connector + mode and seed the logical scale
+    // from the integer wl_output.scale (preferred_scale may override below).
     OutputInfo *out = pickOutput();
-    _outputScale = out ? out->scale : 1;
-    if (_outputScale < 1) _outputScale = 1;
+    _chosenName = out ? out->name : "";
+    _chosenW = out ? out->width : 0;
+    _chosenH = out ? out->height : 0;
+    _logicalScale = out ? static_cast<float>(out->scale) : 1.0f;
+    if (_logicalScale < 1.0f) _logicalScale = 1.0f;
 
     _surface = wl_compositor_create_surface(_compositor);
-    // Buffers are allocated at physical resolution; buffer_scale tells the
-    // compositor how many physical pixels make one logical pixel.
-    wl_surface_set_buffer_scale(_surface, _outputScale);
 
     // Empty input region => fully click-through.
     wl_region *region = wl_compositor_create_region(_compositor);
     wl_surface_set_input_region(_surface, region);
     wl_region_destroy(region);
+
+    // Bind fractional-scale before the first commit so preferred_scale arrives
+    // before we size the surface (it drives every physical->logical conversion).
+    if (_fractionalScaleManager) {
+        _fractionalScale = wp_fractional_scale_manager_v1_get_fractional_scale(
+            _fractionalScaleManager, _surface);
+        static const wp_fractional_scale_v1_listener fsListener = {
+            &WaylandOverlay::fractionalPreferredScale,
+        };
+        wp_fractional_scale_v1_add_listener(_fractionalScale, &fsListener, this);
+    }
+    wl_display_roundtrip(_display); // receive preferred_scale (if any)
+
+    _bufferScale = static_cast<int>(std::ceil(_logicalScale));
+    if (_bufferScale < 1) _bufferScale = 1;
+    wl_surface_set_buffer_scale(_surface, _bufferScale);
 
     _layerSurface = zwlr_layer_shell_v1_get_layer_surface(
         _layerShell, _surface, out ? out->output : nullptr,
@@ -468,26 +524,17 @@ bool WaylandOverlay::initWayland() {
         return false;
     }
 
-    if (_winRect && _winW > 0 && _winH > 0) {
-        // Pin to the window rect: anchor top-left, offset by the rect origin,
-        // size to the rect. The rect is physical; layer coords are logical.
-        zwlr_layer_surface_v1_set_anchor(_layerSurface,
-                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
-        zwlr_layer_surface_v1_set_margin(_layerSurface,
-                                         _winY / _outputScale, 0, 0,
-                                         _winX / _outputScale);
-        zwlr_layer_surface_v1_set_size(_layerSurface,
-                                       _winW / _outputScale, _winH / _outputScale);
-    } else {
-        // Fill the whole output.
-        zwlr_layer_surface_v1_set_anchor(_layerSurface,
-                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
-                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
-        zwlr_layer_surface_v1_set_size(_layerSurface, 0, 0);
+    // Sync any pre-start window rect, then position the surface (pin vs fill).
+    {
+        std::lock_guard<std::mutex> lk(_stateMutex);
+        _winX = _sharedWinX;
+        _winY = _sharedWinY;
+        _winW = _sharedWinW;
+        _winH = _sharedWinH;
+        _winRect = _sharedWinRect;
+        _winGen = _sharedWinGen.load(std::memory_order_relaxed);
     }
+    applyWindowRect();
     // Negative exclusive zone lets us render over panels and fullscreen windows.
     zwlr_layer_surface_v1_set_exclusive_zone(_layerSurface, -1);
     zwlr_layer_surface_v1_set_keyboard_interactivity(_layerSurface, 0);
@@ -514,6 +561,10 @@ void WaylandOverlay::teardown() {
     if (_layerSurface) {
         zwlr_layer_surface_v1_destroy(_layerSurface);
         _layerSurface = nullptr;
+    }
+    if (_fractionalScale) {
+        wp_fractional_scale_v1_destroy(_fractionalScale);
+        _fractionalScale = nullptr;
     }
     if (_surface) {
         wl_surface_destroy(_surface);
@@ -547,6 +598,10 @@ void WaylandOverlay::teardown() {
     if (_seat) {
         wl_seat_destroy(_seat);
         _seat = nullptr;
+    }
+    if (_fractionalScaleManager) {
+        wp_fractional_scale_manager_v1_destroy(_fractionalScaleManager);
+        _fractionalScaleManager = nullptr;
     }
     if (_registry) {
         wl_registry_destroy(_registry);
@@ -955,6 +1010,20 @@ void WaylandOverlay::maybePaint() {
         }
         _scenePending = true;
     }
+    if (_sharedWinGen.load(std::memory_order_acquire) != _winGen) {
+        {
+            std::lock_guard<std::mutex> lk(_stateMutex);
+            _winX = _sharedWinX;
+            _winY = _sharedWinY;
+            _winW = _sharedWinW;
+            _winH = _sharedWinH;
+            _winRect = _sharedWinRect;
+            _winGen = _sharedWinGen.load(std::memory_order_relaxed);
+        }
+        applyWindowRect();
+        wl_surface_commit(_surface);
+        _scenePending = true;
+    }
     if (!_scenePending) return;
 
     // Prefer a free buffer that is not the one currently on screen (avoids
@@ -1190,11 +1259,19 @@ void WaylandOverlay::setSourceSize(int w, int h) {
 }
 
 void WaylandOverlay::setWindowRect(int x, int y, int w, int h) {
-    _winX = x;
-    _winY = y;
-    _winW = w;
-    _winH = h;
-    _winRect = (w > 0 && h > 0);
+    {
+        std::lock_guard<std::mutex> lk(_stateMutex);
+        _sharedWinX = x;
+        _sharedWinY = y;
+        _sharedWinW = w;
+        _sharedWinH = h;
+        _sharedWinRect = (w > 0 && h > 0);
+    }
+    _sharedWinGen.fetch_add(1, std::memory_order_release);
+    if (_running.load(std::memory_order_relaxed)) {
+        const uint64_t one = 1;
+        (void)!write(_wakeFd, &one, sizeof(one));
+    }
 }
 
 void WaylandOverlay::setDetections(std::vector<DetectionBox> boxes) {
