@@ -94,6 +94,10 @@ public:
     // the constructor.
     void setSourceSize(int w, int h);
 
+    // Pin the overlay to a window rect (monitor-relative physical pixels)
+    // instead of filling the whole output. Call before start().
+    void setWindowRect(int x, int y, int w, int h);
+
     // ---- Interactive menu ----
     // Event polled by the app (drain from your loop).
     struct MenuEvent {
@@ -126,6 +130,7 @@ private:
         std::string name;    // connector name, e.g. "DP-1" (wl_output v4+)
         int width = 0;       // current mode, physical pixels
         int height = 0;
+        int scale = 1;       // wl_output.scale (physical px per logical px)
     };
 
     // ---- Shared with the detection thread ----
@@ -156,6 +161,9 @@ private:
     std::vector<OutputInfo *> _outputs;
     int _preferredW = 0; // captured output size, for pickOutput()
     int _preferredH = 0;
+    int _outputScale = 1; // wl_output.scale of the chosen output
+    bool _winRect = false; // setWindowRect() set -> pin to a window
+    int _winX = 0, _winY = 0, _winW = 0, _winH = 0; // monitor-relative physical px
 
     std::atomic<int> _sourceW{0}; // setSourceSize(); 0 = use _preferred* above
     std::atomic<int> _sourceH{0};
@@ -209,7 +217,7 @@ private:
                                int32_t, int32_t, const char *, const char *, int32_t) {}
     static void outputMode(void *data, wl_output *, uint32_t flags, int32_t w, int32_t h, int32_t);
     static void outputDone(void *, wl_output *) {}
-    static void outputScale(void *, wl_output *, int32_t) {}
+    static void outputScale(void *data, wl_output *, int32_t scale);
     static void outputName(void *data, wl_output *, const char *name);
     static void outputDescription(void *, wl_output *, const char *) {}
     static void seatCapabilities(void *data, wl_seat *seat, uint32_t caps);
@@ -233,7 +241,7 @@ private:
     static void keyboardModifiers(void *, wl_keyboard *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {}
     static void keyboardRepeatInfo(void *, wl_keyboard *, int32_t, int32_t) {}
 
-    wl_output *pickOutput() const;
+    OutputInfo *pickOutput() const;
     bool initWayland();
     void teardown();
     void threadMain();

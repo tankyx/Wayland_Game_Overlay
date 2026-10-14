@@ -288,12 +288,17 @@ void WaylandOverlay::outputMode(void *data, wl_output *, uint32_t flags, int32_t
     }
 }
 
+void WaylandOverlay::outputScale(void *data, wl_output *, int32_t scale) {
+    static_cast<OutputInfo *>(data)->scale = scale;
+}
+
 void WaylandOverlay::layerConfigure(void *data, zwlr_layer_surface_v1 *ls,
                                   uint32_t serial, uint32_t w, uint32_t h) {
     auto *self = static_cast<WaylandOverlay *>(data);
     zwlr_layer_surface_v1_ack_configure(ls, serial);
     if (w > 0 && h > 0 &&
-        (static_cast<int>(w) != self->_width || static_cast<int>(h) != self->_height)) {
+        (static_cast<int>(w) * self->_outputScale != self->_width ||
+         static_cast<int>(h) * self->_outputScale != self->_height)) {
         self->allocBuffers(static_cast<int>(w), static_cast<int>(h));
     }
     self->_configured = true;
@@ -361,23 +366,26 @@ void WaylandOverlay::destroyBuffer(Buffer &b) {
 }
 
 void WaylandOverlay::allocBuffers(int w, int h) {
-    std::cout << "[WaylandOverlay] Layer surface configured: " << w << "x" << h << std::endl;
+    const int pw = w * _outputScale; // physical buffer size
+    const int ph = h * _outputScale;
+    std::cout << "[WaylandOverlay] Layer surface configured: " << w << "x" << h
+              << " (scale " << _outputScale << " -> " << pw << "x" << ph << " px)" << std::endl;
     for (auto &b : _buffers) destroyBuffer(b);
     _lastAttached = nullptr;
-    _width = w;
-    _height = h;
-    for (auto &b : _buffers) initBuffer(b, w, h);
+    _width = pw;
+    _height = ph;
+    for (auto &b : _buffers) initBuffer(b, pw, ph);
 }
 
 // ---------------------------------------------------------------------------
 // Setup / teardown (render thread)
 // ---------------------------------------------------------------------------
 
-wl_output *WaylandOverlay::pickOutput() const {
+WaylandOverlay::OutputInfo *WaylandOverlay::pickOutput() const {
     const char *envName = std::getenv("WAYLAND_OVERLAY_OUTPUT");
     if (envName && *envName) {
         for (auto *o : _outputs) {
-            if (o->name == envName) return o->output;
+            if (o->name == envName) return o;
         }
         std::cerr << "[WaylandOverlay] WAYLAND_OVERLAY_OUTPUT='" << envName
                   << "' not found; using default output" << std::endl;
@@ -389,19 +397,19 @@ wl_output *WaylandOverlay::pickOutput() const {
             if (o->width == _preferredW && o->height == _preferredH) {
                 std::cout << "[WaylandOverlay] Using output '" << o->name << "' (matches capture "
                           << _preferredW << "x" << _preferredH << ")" << std::endl;
-                return o->output;
+                return o;
             }
         }
     }
     // Otherwise fall back to the largest output rather than letting the
     // compositor pick the (possibly wrong) focused one.
-    wl_output *best = nullptr;
+    OutputInfo *best = nullptr;
     long bestArea = -1;
     for (auto *o : _outputs) {
         const long area = static_cast<long>(o->width) * o->height;
         if (area > bestArea) {
             bestArea = area;
-            best = o->output;
+            best = o;
         }
     }
     if (best) {
@@ -436,11 +444,16 @@ bool WaylandOverlay::initWayland() {
         return false;
     }
 
+    // Pick the output (and its scale) before creating the surface so buffers
+    // are sized correctly for HiDPI.
+    OutputInfo *out = pickOutput();
+    _outputScale = out ? out->scale : 1;
+    if (_outputScale < 1) _outputScale = 1;
+
     _surface = wl_compositor_create_surface(_compositor);
-    // Detections are published in output pixel coordinates; pin buffer scale
-    // to 1 so buffer pixels map 1:1 onto the output (requires the compositor
-    // to not use fractional scaling on this output).
-    wl_surface_set_buffer_scale(_surface, 1);
+    // Buffers are allocated at physical resolution; buffer_scale tells the
+    // compositor how many physical pixels make one logical pixel.
+    wl_surface_set_buffer_scale(_surface, _outputScale);
 
     // Empty input region => fully click-through.
     wl_region *region = wl_compositor_create_region(_compositor);
@@ -448,22 +461,36 @@ bool WaylandOverlay::initWayland() {
     wl_region_destroy(region);
 
     _layerSurface = zwlr_layer_shell_v1_get_layer_surface(
-        _layerShell, _surface, pickOutput(), ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wayland-overlay");
+        _layerShell, _surface, out ? out->output : nullptr,
+        ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wayland-overlay");
     if (!_layerSurface) {
         std::cerr << "[WaylandOverlay] Failed to create layer surface" << std::endl;
         return false;
     }
 
-    // Anchor to all edges so the surface fills the output; negative exclusive
-    // zone lets us render over panels and fullscreen windows.
-    zwlr_layer_surface_v1_set_anchor(_layerSurface,
-                                     ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
-                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
+    if (_winRect && _winW > 0 && _winH > 0) {
+        // Pin to the window rect: anchor top-left, offset by the rect origin,
+        // size to the rect. The rect is physical; layer coords are logical.
+        zwlr_layer_surface_v1_set_anchor(_layerSurface,
+                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
+        zwlr_layer_surface_v1_set_margin(_layerSurface,
+                                         _winY / _outputScale, 0, 0,
+                                         _winX / _outputScale);
+        zwlr_layer_surface_v1_set_size(_layerSurface,
+                                       _winW / _outputScale, _winH / _outputScale);
+    } else {
+        // Fill the whole output.
+        zwlr_layer_surface_v1_set_anchor(_layerSurface,
+                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
+                                             ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
+        zwlr_layer_surface_v1_set_size(_layerSurface, 0, 0);
+    }
+    // Negative exclusive zone lets us render over panels and fullscreen windows.
     zwlr_layer_surface_v1_set_exclusive_zone(_layerSurface, -1);
     zwlr_layer_surface_v1_set_keyboard_interactivity(_layerSurface, 0);
-    zwlr_layer_surface_v1_set_size(_layerSurface, 0, 0);
 
     static const zwlr_layer_surface_v1_listener layerListener = {
         &WaylandOverlay::layerConfigure,
@@ -1160,6 +1187,14 @@ void WaylandOverlay::setLabelNames(const std::vector<std::string> &names) {
 void WaylandOverlay::setSourceSize(int w, int h) {
     _sourceW.store(w > 0 ? w : 0, std::memory_order_relaxed);
     _sourceH.store(h > 0 ? h : 0, std::memory_order_relaxed);
+}
+
+void WaylandOverlay::setWindowRect(int x, int y, int w, int h) {
+    _winX = x;
+    _winY = y;
+    _winW = w;
+    _winH = h;
+    _winRect = (w > 0 && h > 0);
 }
 
 void WaylandOverlay::setDetections(std::vector<DetectionBox> boxes) {
