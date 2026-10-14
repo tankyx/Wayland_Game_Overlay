@@ -164,7 +164,24 @@ void WaylandOverlay::registryGlobal(void *data, wl_registry *reg, uint32_t name,
 void WaylandOverlay::fractionalPreferredScale(void *data, wp_fractional_scale_v1 *,
                                               uint32_t scale) {
     auto *self = static_cast<WaylandOverlay *>(data);
-    if (scale > 0) self->_logicalScale = static_cast<float>(scale) / 120.0f;
+    if (scale <= 0) return;
+
+    self->_logicalScale = static_cast<float>(scale) / 120.0f;
+    const int bufferScale = static_cast<int>(std::ceil(self->_logicalScale));
+    if (bufferScale != self->_bufferScale) {
+        self->_bufferScale = bufferScale;
+        if (self->_surface) wl_surface_set_buffer_scale(self->_surface, bufferScale);
+    }
+
+    // The first preferred_scale can arrive only once the surface is mapped
+    // (after the initial pin), and the scale can change at runtime, so re-apply
+    // the pin: margins/size are logical and depend on _logicalScale. No-op while
+    // _layerSurface is still null during init — initWayland applies it after.
+    if (self->_layerSurface) {
+        self->applyWindowRect();
+        wl_surface_commit(self->_surface);
+        self->_scenePending = true;
+    }
 }
 
 void WaylandOverlay::seatCapabilities(void *data, wl_seat *seat, uint32_t caps) {
