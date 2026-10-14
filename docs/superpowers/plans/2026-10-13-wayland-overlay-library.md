@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extract the duplicated `LinuxOverlay` class into one reusable `wayland_overlay` static library and migrate both consumers to it.
+**Goal:** Extract the duplicated overlay class into one reusable `wayland_overlay` static library and migrate both consumers to it.
 
 **Architecture:** A single C++ static library (`WaylandOverlay.h` + `.cpp` + vendored Wayland bindings) with zero dependencies beyond `wayland-client` and `pthread`. The two consumers link the `wayland_overlay` target via `add_subdirectory`.
 
@@ -13,7 +13,6 @@
 ## Global Constraints
 
 - C++17 (`CMAKE_CXX_STANDARD 17`, `REQUIRED ON`).
-- The class is renamed `LinuxOverlay` → `WaylandOverlay`; API otherwise identical to the superset copy.
 - No X11 dependency in the library; no install rules.
 - Vendored bindings are copied verbatim from the superset consumer's `src/wayland/` (already patched for the `namespace` keyword issue).
 - Build type defaults to `Release` when unset (both consumers do this).
@@ -34,8 +33,8 @@
 
 **Files:**
 - Create: `CMakeLists.txt`
-- Create: `include/WaylandOverlay.h` (from the superset `LinuxOverlay.h`, class renamed)
-- Create: `src/WaylandOverlay.cpp` (from the superset `LinuxOverlay.cpp`, class renamed)
+- Create: `include/WaylandOverlay.h` (the public API)
+- Create: `src/WaylandOverlay.cpp` (the overlay implementation)
 - Create: `src/wayland/xdg-shell-client-protocol.h`, `src/wayland/xdg-shell-protocol.c`, `src/wayland/wlr-layer-shell-unstable-v1-client-protocol.h`, `src/wayland/wlr-layer-shell-unstable-v1-protocol.c` (copied verbatim from the superset consumer)
 - Create: `src/wayland/README.md` (copied from the superset consumer)
 - Create: `README.md`
@@ -50,11 +49,11 @@ Expected: 5 files present (`xdg-shell-client-protocol.h`, `xdg-shell-protocol.c`
 
 - [ ] **Step 2: Create `include/WaylandOverlay.h` from the superset header, renaming the class**
 
-Copy `<superset-consumer>/src/LinuxOverlay.h`, then rename every `LinuxOverlay` token to `WaylandOverlay` (class decl, both constructors, destructor). Everything else — `DetectionBox`, `Shape`, member decls, static callback decls, private members — unchanged.
+Create the `WaylandOverlay` header with the public API: `DetectionBox`, `Shape`, constructors, destructor, method declarations, static callback declarations, private members.
 
 - [ ] **Step 3: Create `src/WaylandOverlay.cpp` from the superset `.cpp`, renaming the class**
 
-Copy `<superset-consumer>/src/LinuxOverlay.cpp`, then rename every `LinuxOverlay::` to `WaylandOverlay::` (all method definitions, including static callbacks and `pickOutput`/`initWayland`/`teardown`/`threadMain`/`initBuffer`/`destroyBuffer`/`allocBuffers`/`maybePaint`/`paint`). No other changes.
+Implement all `WaylandOverlay` methods (including static callbacks and `pickOutput`/`initWayland`/`teardown`/`threadMain`/`initBuffer`/`destroyBuffer`/`allocBuffers`/`maybePaint`/`paint`).
 
 - [ ] **Step 4: Write `CMakeLists.txt`**
 
@@ -136,7 +135,7 @@ git commit -m "feat: standalone overlay example"
 ### Task 3: Migrate the base consumer
 
 **Files:**
-- Delete: `<base-consumer>/src/LinuxOverlay.h`, `src/LinuxOverlay.cpp`, `src/wayland/`
+- Delete: `<base-consumer>/src/<old overlay header>`, `<old overlay cpp>`, `src/wayland/`
 - Modify: `<base-consumer>/CMakeLists.txt` (Linux branch)
 - Modify: `<base-consumer>/src/<main>.cpp` (overlay include + alias)
 
@@ -146,15 +145,15 @@ git commit -m "feat: standalone overlay example"
 
 - [ ] **Step 1: Delete the private overlay files**
 
-Run: `rm -rf <base-consumer>/src/LinuxOverlay.h <base-consumer>/src/LinuxOverlay.cpp <base-consumer>/src/wayland`
+Run: `rm -rf <base-consumer>/src/<old overlay header> <base-consumer>/src/<old overlay cpp> <base-consumer>/src/wayland`
 
 - [ ] **Step 2: Edit CMakeLists Linux branch**
 
-Remove `src/LinuxOverlay.cpp`, `src/wayland/xdg-shell-protocol.c`, `src/wayland/wlr-layer-shell-unstable-v1-protocol.c` from the executable's `target_sources(...)` (keep the capture source). Add `add_subdirectory(../Wayland_Game_Overlay wayland_overlay_build)` in the `if(NOT WIN32)` block, and add `wayland_overlay` to `target_link_libraries(...)`.
+Remove the old overlay sources, `src/wayland/xdg-shell-protocol.c`, `src/wayland/wlr-layer-shell-unstable-v1-protocol.c` from the executable's `target_sources(...)` (keep the capture source). Add `add_subdirectory(../Wayland_Game_Overlay wayland_overlay_build)` in the `if(NOT WIN32)` block, and add `wayland_overlay` to `target_link_libraries(...)`.
 
 - [ ] **Step 3: Edit the main source**
 
-`#include "LinuxOverlay.h"` → `#include <WaylandOverlay.h>`. `using DebugOverlay = LinuxOverlay;` → `using DebugOverlay = WaylandOverlay;`. Leave the Windows overlay branch untouched.
+`#include <WaylandOverlay.h>`; alias `WaylandOverlay` as `DebugOverlay`. Leave the Windows overlay branch untouched.
 
 - [ ] **Step 4: Build on Linux**
 
@@ -173,9 +172,9 @@ git -C <base-consumer> commit -m "refactor: use shared wayland_overlay library"
 ### Task 4: Migrate the superset consumer
 
 **Files:**
-- Delete: `<superset-consumer>/src/LinuxOverlay.h`, `src/LinuxOverlay.cpp`, `src/wayland/`
+- Delete: `<superset-consumer>/src/<old overlay header>`, `<old overlay cpp>`, `src/wayland/`
 - Modify: `<superset-consumer>/CMakeLists.txt`
-- Modify: `<superset-consumer>/src/<main>.cpp` (`#include "LinuxOverlay.h"` and all `LinuxOverlay` / `LinuxOverlay::Shape` tokens)
+- Modify: `<superset-consumer>/src/<main>.cpp` (overlay include and class references)
 
 **Interfaces:**
 - Consumes: `wayland_overlay` target, `WaylandOverlay`, `WaylandOverlay::Shape`.
@@ -183,15 +182,15 @@ git -C <base-consumer> commit -m "refactor: use shared wayland_overlay library"
 
 - [ ] **Step 1: Delete the private overlay files**
 
-Run: `rm -rf <superset-consumer>/src/LinuxOverlay.h <superset-consumer>/src/LinuxOverlay.cpp <superset-consumer>/src/wayland`
+Run: `rm -rf <superset-consumer>/src/<old overlay header> <superset-consumer>/src/<old overlay cpp> <superset-consumer>/src/wayland`
 
 - [ ] **Step 2: Edit the CMakeLists**
 
-Remove `src/LinuxOverlay.cpp`, `src/wayland/xdg-shell-protocol.c`, `src/wayland/wlr-layer-shell-unstable-v1-protocol.c` from `add_executable(...)` (keep the main source, its memory-reader header, and the window-detection header). Add `add_subdirectory(../Wayland_Game_Overlay wayland_overlay_build)` and add `wayland_overlay` to `target_link_libraries(...)`. Keep the `HAVE_X11` block as-is.
+Remove the old overlay sources, `src/wayland/xdg-shell-protocol.c`, `src/wayland/wlr-layer-shell-unstable-v1-protocol.c` from `add_executable(...)` (keep the main source, its memory-reader header, and the window-detection header). Add `add_subdirectory(../Wayland_Game_Overlay wayland_overlay_build)` and add `wayland_overlay` to `target_link_libraries(...)`. Keep the `HAVE_X11` block as-is.
 
 - [ ] **Step 3: Edit the main source**
 
-`#include "LinuxOverlay.h"` → `#include <WaylandOverlay.h>`; replace every `LinuxOverlay` token with `WaylandOverlay` (including `LinuxOverlay::Shape` → `WaylandOverlay::Shape`).
+`#include <WaylandOverlay.h>`; use the `WaylandOverlay` class (including `WaylandOverlay::Shape`).
 
 - [ ] **Step 4: Build**
 

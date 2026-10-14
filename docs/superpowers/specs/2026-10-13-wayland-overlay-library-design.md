@@ -34,9 +34,9 @@ Wayland_Game_Overlay/
 ├── CMakeLists.txt          # wayland_overlay static lib + example target
 ├── README.md               # consumption docs (add_subdirectory / FetchContent)
 ├── include/
-│   └── WaylandOverlay.h    # public API (renamed from LinuxOverlay.h)
+│   └── WaylandOverlay.h    # public API
 ├── src/
-│   ├── WaylandOverlay.cpp  # the superset LinuxOverlay.cpp verbatim, renamed class
+│   ├── WaylandOverlay.cpp  # the overlay implementation
 │   └── wayland/            # vendored generated bindings
 │       ├── xdg-shell-protocol.c, xdg-shell-client-protocol.h
 │       └── wlr-layer-shell-unstable-v1-protocol.c, -client-protocol.h
@@ -55,7 +55,7 @@ CMake target `wayland_overlay` (STATIC):
 
 ### 2. Public API — `WaylandOverlay`
 
-Exact superset of the source `LinuxOverlay`, renamed:
+The public class:
 
 ```cpp
 class WaylandOverlay {
@@ -106,20 +106,20 @@ Semantics unchanged from the current implementation:
 
 **The base consumer**
 
-- Delete its private `LinuxOverlay.h`, `LinuxOverlay.cpp`, `wayland/`.
-- CMake Linux branch: remove `LinuxOverlay.cpp` and the two `.c` files from its
-  executable; add `add_subdirectory(../Wayland_Game_Overlay wayland_overlay_build)`
-  and link `wayland_overlay`.
-- Its main source: `#include <WaylandOverlay.h>` and alias
-  `WaylandOverlay` (any Windows overlay branch untouched).
+- Delete its private overlay copy (`<old overlay header/cpp>`, `wayland/`).
+- CMake Linux branch: remove the old overlay sources from its executable; add
+  `add_subdirectory(../Wayland_Game_Overlay wayland_overlay_build)` and link
+  `wayland_overlay`.
+- Its main source: `#include <WaylandOverlay.h>` and alias `WaylandOverlay`
+  (any Windows overlay branch untouched).
 
 **The superset consumer**
 
-- Delete its private `LinuxOverlay.h`, `LinuxOverlay.cpp`, `wayland/`.
+- Delete its private overlay copy (`<old overlay header/cpp>`, `wayland/`).
 - CMake: remove those sources; add the same `add_subdirectory` + link; keep its
   app-specific window-detection header and `HAVE_X11` block.
-- Its main source: `#include <WaylandOverlay.h>`, `LinuxOverlay` →
-  `WaylandOverlay` (including `Shape` references).
+- Its main source: `#include <WaylandOverlay.h>` and use the `WaylandOverlay`
+  class (including `Shape` references).
 
 ### 4. Example and verification
 
