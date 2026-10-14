@@ -5,25 +5,23 @@ Status: Approved (design), pending spec review
 
 ## Goal
 
-Extract the click-through Wayland overlay currently duplicated in two private
-copies into a single reusable C++ class that any developer can consume in their
+Extract the click-through Wayland overlay, originally duplicated as two private
+copies, into a single reusable C++ class that any developer can consume in their
 own game-overlay project.
 
-Source projects:
+The two private copies were:
 
-- `YOLOv8-TensorRT-CPP/src/LinuxOverlay.{h,cpp}` — base version (boxes, labels, stats).
-- `Halo-MCC/src/LinuxOverlay.{h,cpp}` — strict superset (adds `Shape` primitives:
-  filled rect + line, for HP/shield bars and skeleton bones).
+- a base version (boxes, labels, stats)
+- a strict superset (adds `Shape` primitives: filled rect + line)
 
-The Halo copy is the canonical implementation; it was itself copied verbatim from
-YOLO and then extended.
+The superset copy is the canonical implementation; the base was copied verbatim
+and then extended.
 
 ## Non-goals
 
-- No Windows support. YOLO's `DiscordOverlay` path is untouched.
+- No Windows support.
 - No screen capture. The library renders only; capture stays in the apps.
-- No X11 game-window detection. `x11_window.h` (hardcodes "steam_app_976730" /
-  "Halo") stays in Halo.
+- No X11 game-window detection; that stays in the consuming app.
 - No install rules / packaging for distros. Consumption is via
   `add_subdirectory` or `FetchContent`.
 
@@ -38,8 +36,8 @@ Wayland_Game_Overlay/
 ├── include/
 │   └── WaylandOverlay.h    # public API (renamed from LinuxOverlay.h)
 ├── src/
-│   ├── WaylandOverlay.cpp  # Halo's LinuxOverlay.cpp verbatim, renamed class
-│   └── wayland/            # vendored generated bindings (copied from Halo)
+│   ├── WaylandOverlay.cpp  # the superset LinuxOverlay.cpp verbatim, renamed class
+│   └── wayland/            # vendored generated bindings
 │       ├── xdg-shell-protocol.c, xdg-shell-client-protocol.h
 │       └── wlr-layer-shell-unstable-v1-protocol.c, -client-protocol.h
 └── example/
@@ -57,7 +55,7 @@ CMake target `wayland_overlay` (STATIC):
 
 ### 2. Public API — `WaylandOverlay`
 
-Exact superset of Halo's `LinuxOverlay`, renamed:
+Exact superset of the source `LinuxOverlay`, renamed:
 
 ```cpp
 class WaylandOverlay {
@@ -106,31 +104,29 @@ Semantics unchanged from the current implementation:
 
 ### 3. Migration of the two consumers
 
-**YOLOv8-TensorRT-CPP**
+**The base consumer**
 
-- Delete `src/LinuxOverlay.h`, `src/LinuxOverlay.cpp`, `src/wayland/`.
-- CMake Linux branch: remove `src/LinuxOverlay.cpp` and the two `.c` files from
-  `detect_object_image`; add `add_subdirectory(../Wayland_Game_Overlay
-  wayland_overlay_build)` and `target_link_libraries(detect_object_image PRIVATE
-  wayland_overlay)`.
-- `object_detection_image_mt.cpp`: `#include <WaylandOverlay.h>`,
-  `using DebugOverlay = WaylandOverlay;` (Windows `DiscordOverlay` branch
-  untouched).
+- Delete its private `LinuxOverlay.h`, `LinuxOverlay.cpp`, `wayland/`.
+- CMake Linux branch: remove `LinuxOverlay.cpp` and the two `.c` files from its
+  executable; add `add_subdirectory(../Wayland_Game_Overlay wayland_overlay_build)`
+  and link `wayland_overlay`.
+- Its main source: `#include <WaylandOverlay.h>` and alias
+  `WaylandOverlay` (any Windows overlay branch untouched).
 
-**Halo-MCC**
+**The superset consumer**
 
-- Delete `src/LinuxOverlay.h`, `src/LinuxOverlay.cpp`, `src/wayland/`.
-- CMake: remove those sources from `halo3_overlay`; add the same
-  `add_subdirectory` + link; keep `x11_window.h` and the `HAVE_X11` block.
-- `h3_overlay.cpp`: `#include <WaylandOverlay.h>`, `LinuxOverlay` →
+- Delete its private `LinuxOverlay.h`, `LinuxOverlay.cpp`, `wayland/`.
+- CMake: remove those sources; add the same `add_subdirectory` + link; keep its
+  app-specific window-detection header and `HAVE_X11` block.
+- Its main source: `#include <WaylandOverlay.h>`, `LinuxOverlay` →
   `WaylandOverlay` (including `Shape` references).
 
 ### 4. Example and verification
 
 - `example/main.cpp`: open the overlay on the largest output, paint a few boxes,
   one line, one filled rect, and a stats line; run a few seconds, then `stop()`.
-- Verification gate: build the example standalone; then build YOLO and Halo and
-  confirm both compile and link against `wayland_overlay`. Runtime testing of the
+- Verification gate: build the example standalone; then build both consumers and
+  confirm they compile and link against `wayland_overlay`. Runtime testing of the
   overlay requires a live Wayland session and is out of scope for CI-style
   verification.
 

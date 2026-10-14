@@ -209,10 +209,10 @@ After `start()`: `registerSetting(0, "Confidence", 0.0f, 1.0f, 0.05f, 0.5f)` and
 Run: `cmake -B build && cmake --build build -j && ctest --test-dir build --output-on-failure`
 Expected: builds; `raster_test` and `menu_test` pass.
 
-- [ ] **Step 3: Backward-compat gates — build Halo and YOLO**
+- [ ] **Step 3: Backward-compat gates — build the consumers**
 
-Run: `cmake --build build -j` in `Halo-MCC` and in `YOLOv8-TensorRT-CPP` (with `TMPDIR`).
-Expected: `halo3_overlay` and `detect_object_image` still build (public API is additive).
+Run: `cmake --build build -j` in each consumer repo (with `TMPDIR`).
+Expected: both consumers still build (public API is additive).
 
 - [ ] **Step 4: Commit**
 

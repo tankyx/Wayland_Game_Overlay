@@ -719,7 +719,7 @@ void WaylandOverlay::paint(Buffer &buf) {
             scene.add(r);
         }
     }
-    // Extra primitives (HP/shield bars, skeleton bones) in the same source space.
+    // Extra primitives in the same source space.
     std::vector<Shape> shapes;
     shapes.reserve(_shapes.size());
     if (_showShapes) {
@@ -790,7 +790,7 @@ void WaylandOverlay::paint(Buffer &buf) {
         }
     }
 
-    // Bars / bones on top of the boxes.
+    // Extra primitives on top of the boxes.
     if (_showShapes) {
         for (const auto &s : shapes) {
             const int axis = (s.gradient == Shape::Vertical) ? 1 : 0;

@@ -7,7 +7,7 @@ Status: Approved (design), pending spec review
 
 Extend the `WaylandOverlay::Shape` primitive with additional filled shapes and
 linear gradients, so overlays can draw circles, triangles, arbitrary polygons,
-and gradient-filled bars (HP/shield bars) in the same software paint path.
+and gradient-filled bars in the same software paint path.
 
 ## Non-goals
 
@@ -75,7 +75,7 @@ members are appended and value-initialized.
 - Extend the scene-bounds pass to include `Triangle`/`Polygon` point extents and
   `Ellipse` extents, so damage tracking covers them.
 - Extend the paint pass to dispatch on `kind` and apply gradients.
-- `Shape` construction sites in consumers (YOLO, Halo) need no changes.
+- `Shape` construction sites in consumers need no changes.
 
 ## Verification
 

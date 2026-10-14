@@ -22,7 +22,7 @@
 
 | Input / condition | Expected behavior | Pinning task |
 |---|---|---|
-| `Shape{Filled,…}` with 7 init args (Halo's usage) | still compiles | Task 3 (build Halo) |
+| `Shape{Filled,…}` with 7 init args | still compiles | Task 3 (build a consumer) |
 | Gradient with `gradient == None` or `color == color2` | solid fill, no divide-by-zero | Task 1 test |
 | Ellipse with zero/negative radius | clamped to 1px, no hang | Task 1 test |
 | Triangle/Polygon with < 3 points | ignored | Task 1 test |
@@ -109,7 +109,7 @@ git commit -m "feat: Ellipse/Triangle/Polygon shapes and linear gradients"
 
 **Files:**
 - Modify: `example/main.cpp`
-- Verify: `Halo-MCC` still builds (pins the `Shape{Filled,…}` 7-arg aggregate init)
+- Verify: a consumer still builds (pins the `Shape{Filled,…}` 7-arg aggregate init)
 
 **Interfaces:**
 - Consumes: `Shape` API from Task 2.
@@ -123,10 +123,10 @@ Add to the `shapes` vector one `Ellipse` (gradient), one `Triangle` (via `pts`),
 Run: `cmake -B build && cmake --build build -j`
 Expected: `build/example/overlay_example` builds.
 
-- [ ] **Step 3: Build Halo-MCC (backward-compat gate)**
+- [ ] **Step 3: Build a consumer (backward-compat gate)**
 
-Run: `cmake --build build -j` (in `Halo-MCC`)
-Expected: `halo3_overlay` still builds — confirms the 7-arg `Shape{Filled,…}` aggregate init is unbroken.
+Run: `cmake --build build -j` (in the consumer repo)
+Expected: it still builds — confirms the 7-arg `Shape{Filled,…}` aggregate init is unbroken.
 
 - [ ] **Step 4: Commit**
 

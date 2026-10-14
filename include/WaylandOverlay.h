@@ -62,7 +62,7 @@ public:
     // Additive primitive on top of the detection boxes — same surface, buffer
     // and damage plumbing. Coordinates are in the same space as DetectionBox
     // (source pixels); they are scaled to the surface with the same factor.
-    // Used for HP/shield bars, skeleton bones, and arbitrary overlays.
+    // Used for bars, outlines, and arbitrary overlay primitives.
     struct Shape {
         enum Kind { Filled, Line, Ellipse, Triangle, Polygon };
         enum Gradient { NoGradient, Horizontal, Vertical };

@@ -2,7 +2,7 @@
 
 A reusable, dependency-light C++ class for drawing a click-through debug
 overlay on Wayland — the kind you put over a game to draw detection boxes,
-HP bars, skeletons, or stats.
+shapes, labels, or stats.
 
 - Fullscreen wlr-layer-shell surface on the **overlay** layer (KWin + wlroots),
   so it floats above the game and never steals input.
@@ -120,7 +120,7 @@ it (rect → border, ellipse → ring, triangle/polygon → thick closed outline
 Outlines use solid `color`; gradients apply to fills only. `Line` ignores the
 flag (a line is already a stroke). A circle is an `Ellipse` with `x1 == y1`.
 
-Additive primitives (HP/shield bars, skeleton bones) that box outlines can't
+Additive primitives (filled shapes and lines) that box outlines can't
 express. Painted on top of the boxes.
 
 ```cpp
