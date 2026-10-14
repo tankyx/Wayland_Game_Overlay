@@ -98,6 +98,22 @@ int main() {
         check(at(b, 15, 10) == 0, "polygon outline interior empty");
     }
 
+    // 9. blendPixel: opaque passes through, translucent blends.
+    check(blendPixel(0x00000000, 0xFF102030) == 0xFF102030, "blend opaque over transparent");
+    check(blendPixel(0xFF000000, 0xFF102030) == 0xFF102030, "blend opaque over opaque");
+    check(blendPixel(0x00000000, 0x80FF0000) == 0x80FF0000, "blend translucent over transparent");
+    check((blendPixel(0xFF000000, 0x80FF0000) >> 16 & 0xFF) == 0x80,
+          "blend translucent red over black");
+
+    // 10. Rounded rect: center + top edge filled, corner outside the arc empty.
+    {
+        auto b = fresh();
+        fillRoundedRect(b.data(), kW, kH, 0, 0, 32, 32, 8.0f, 0xFFFF00FF);
+        check(at(b, 16, 16) == 0xFFFF00FF, "rounded rect center");
+        check(at(b, 16, 0) == 0xFFFF00FF, "rounded rect top edge");
+        check(at(b, 0, 0) == 0, "rounded rect corner outside arc");
+    }
+
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
         return 1;

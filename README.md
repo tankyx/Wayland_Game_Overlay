@@ -111,6 +111,9 @@ struct Shape {
     Gradient gradient = NoGradient;
     std::vector<float> pts;  // Triangle(6)/Polygon(2N): x,y pairs
     bool outline = false;    // stroke the boundary instead of filling
+    bool glow = false;       // soft halo behind the shape
+    float glowRadius = 6.0f; // halo size in px
+    float radius = 0.0f;     // rounded-corner radius for Filled rects
 };
 void setShapes(std::vector<Shape> shapes);
 ```
@@ -119,6 +122,16 @@ Set `outline = true` to stroke any shape with `thickness` px instead of filling
 it (rect → border, ellipse → ring, triangle/polygon → thick closed outline).
 Outlines use solid `color`; gradients apply to fills only. `Line` ignores the
 flag (a line is already a stroke). A circle is an `Ellipse` with `x1 == y1`.
+
+**Graphical effects** (all opt-in):
+
+- **Translucent fills** — use `0xAARRGGBB` with `AA < 0xFF`; fills alpha-blend.
+- **Anti-aliasing** — `overlay.setAntiAlias(true)` smooths line/ellipse/polygon
+  edges with a 1px feather.
+- **Glow** — set `glow = true` + `glowRadius` for a soft halo.
+- **Rounded corners** — set `radius` on a `Filled` rect (the menu is always
+  rounded).
+- **Text** — labels are drawn with a 1px outline for contrast.
 
 Additive primitives (filled shapes and lines) that box outlines can't
 express. Painted on top of the boxes.

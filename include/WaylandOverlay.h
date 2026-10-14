@@ -76,6 +76,9 @@ public:
         Gradient gradient = NoGradient;
         std::vector<float> pts;               // Triangle(6)/Polygon(2N): x,y pairs
         bool outline = false;                 // stroke the boundary instead of filling
+        bool glow = false;                    // draw a soft halo behind the shape
+        float glowRadius = 6.0f;              // halo size in px
+        float radius = 0.0f;                  // rounded-corner radius for Filled rects
     };
 
     WaylandOverlay(const WaylandOverlay &) = delete;
@@ -95,6 +98,9 @@ public:
     // maps boxes by surface/source. 0 (default) falls back to the size passed to
     // the constructor.
     void setSourceSize(int w, int h);
+
+    // Smooth (anti-aliased) edges on lines / ellipses / polygons. Default off.
+    void setAntiAlias(bool on);
 
     // Pin the overlay to a window rect (monitor-relative physical pixels)
     // instead of filling the whole output. Callable at any time, from any
@@ -189,6 +195,7 @@ private:
 
     std::atomic<int> _sourceW{0}; // setSourceSize(); 0 = use _preferred* above
     std::atomic<int> _sourceH{0};
+    std::atomic<bool> _antiAlias{false};
 
     Buffer _buffers[2];
     Buffer *_lastAttached = nullptr; // buffer content currently on screen

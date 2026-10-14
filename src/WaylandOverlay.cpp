@@ -707,8 +707,17 @@ void drawText(uint32_t *px, int surfW, int surfH, int x, int y, const char *text
         for (int col = 0; col < 5; ++col) {
             for (int row = 0; row < 7; ++row) {
                 if (g->col[col] & (1u << row)) {
-                    fillRect(px, surfW, surfH, x + col * kTextScale, y + row * kTextScale,
-                             kTextScale, kTextScale, color);
+                    const int gx = x + col * kTextScale;
+                    const int gy = y + row * kTextScale;
+                    // 1px black outline (8 neighbours), then the glyph color.
+                    for (int oy = -1; oy <= 1; ++oy) {
+                        for (int ox = -1; ox <= 1; ++ox) {
+                            if (ox == 0 && oy == 0) continue;
+                            fillRect(px, surfW, surfH, gx + ox, gy + oy, kTextScale,
+                                     kTextScale, 0xFF000000);
+                        }
+                    }
+                    fillRect(px, surfW, surfH, gx, gy, kTextScale, kTextScale, color);
                 }
             }
         }
@@ -864,13 +873,54 @@ void WaylandOverlay::paint(Buffer &buf) {
 
     // Extra primitives on top of the boxes.
     if (_showShapes) {
+        const bool aa = _antiAlias.load(std::memory_order_relaxed);
+        // Boundary of a shape, used for the glow halo (grows outward).
+        auto drawShapeOutline = [&](const Shape &s, float thickness, uint32_t color) {
+            switch (s.kind) {
+            case Shape::Line:
+                drawLine(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, thickness, color);
+                break;
+            case Shape::Ellipse:
+                fillEllipseOutline(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1,
+                                   thickness, color);
+                break;
+            case Shape::Triangle:
+            case Shape::Polygon:
+                strokePolygon(buf.data, _width, _height, s.pts, thickness, color);
+                break;
+            case Shape::Filled:
+            default:
+                fillRectOutline(buf.data, _width, _height,
+                                static_cast<int>(std::lround(s.x0)),
+                                static_cast<int>(std::lround(s.y0)),
+                                static_cast<int>(std::lround(s.x1 - s.x0)),
+                                static_cast<int>(std::lround(s.y1 - s.y0)),
+                                static_cast<int>(std::lround(thickness)), color);
+                break;
+            }
+        };
+
         for (const auto &s : shapes) {
             const int axis = (s.gradient == Shape::Vertical) ? 1 : 0;
             const uint32_t c = dim(s.color, _opacity);
             const uint32_t c2 = dim(s.color2, _opacity);
+
+            // Soft halo behind the shape (3 fading passes, growing outward).
+            if (s.glow && s.glowRadius > 0.0f) {
+                for (int pass = 1; pass <= 3; ++pass) {
+                    const float frac = static_cast<float>(pass) / 3.0f;
+                    const uint32_t gc = dim(c, 0.05f + 0.20f * (1.0f - frac));
+                    drawShapeOutline(s, s.glowRadius * frac, gc);
+                }
+            }
+
             switch (s.kind) {
             case Shape::Line:
-                drawLine(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, s.thickness, c);
+                if (aa) {
+                    drawLineAA(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, s.thickness, c);
+                } else {
+                    drawLine(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, s.thickness, c);
+                }
                 break;
             case Shape::Ellipse:
                 if (s.outline) {
@@ -878,6 +928,8 @@ void WaylandOverlay::paint(Buffer &buf) {
                                        s.thickness, c);
                 } else if (s.gradient != Shape::NoGradient) {
                     fillEllipseGradient(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, c, c2, axis);
+                } else if (aa) {
+                    fillEllipseAA(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, c);
                 } else {
                     fillEllipse(buf.data, _width, _height, s.x0, s.y0, s.x1, s.y1, c);
                 }
@@ -885,42 +937,50 @@ void WaylandOverlay::paint(Buffer &buf) {
             case Shape::Triangle:
             case Shape::Polygon:
                 if (s.outline) {
-                    strokePolygon(buf.data, _width, _height, s.pts, s.thickness, c);
+                    if (aa) {
+                        strokePolygonAA(buf.data, _width, _height, s.pts, s.thickness, c);
+                    } else {
+                        strokePolygon(buf.data, _width, _height, s.pts, s.thickness, c);
+                    }
+                } else if (aa) {
+                    fillPolygonAA(buf.data, _width, _height, s.pts, c);
                 } else {
                     fillPolygon(buf.data, _width, _height, s.pts, c);
                 }
                 break;
             case Shape::Filled:
-            default:
+            default: {
+                const int rx = static_cast<int>(std::lround(s.x0));
+                const int ry = static_cast<int>(std::lround(s.y0));
+                const int rw = static_cast<int>(std::lround(s.x1 - s.x0));
+                const int rh = static_cast<int>(std::lround(s.y1 - s.y0));
                 if (s.outline) {
-                    fillRectOutline(buf.data, _width, _height,
-                                    static_cast<int>(std::lround(s.x0)),
-                                    static_cast<int>(std::lround(s.y0)),
-                                    static_cast<int>(std::lround(s.x1 - s.x0)),
-                                    static_cast<int>(std::lround(s.y1 - s.y0)),
-                                    static_cast<int>(std::lround(s.thickness)), c);
+                    if (s.radius > 0.0f) {
+                        fillRoundedRectOutline(buf.data, _width, _height, rx, ry, rw, rh,
+                                               s.radius, static_cast<int>(std::lround(s.thickness)), c);
+                    } else {
+                        fillRectOutline(buf.data, _width, _height, rx, ry, rw, rh,
+                                        static_cast<int>(std::lround(s.thickness)), c);
+                    }
                 } else if (s.gradient != Shape::NoGradient) {
-                    fillRectGradient(buf.data, _width, _height,
-                                     static_cast<int>(std::lround(s.x0)),
-                                     static_cast<int>(std::lround(s.y0)),
-                                     static_cast<int>(std::lround(s.x1 - s.x0)),
-                                     static_cast<int>(std::lround(s.y1 - s.y0)),
-                                     c, c2, axis);
+                    fillRectGradient(buf.data, _width, _height, rx, ry, rw, rh, c, c2, axis);
+                } else if (s.radius > 0.0f) {
+                    fillRoundedRect(buf.data, _width, _height, rx, ry, rw, rh, s.radius, c);
                 } else {
-                    fillRect(buf.data, _width, _height, static_cast<int>(std::lround(s.x0)),
-                             static_cast<int>(std::lround(s.y0)),
-                             static_cast<int>(std::lround(s.x1 - s.x0)),
-                             static_cast<int>(std::lround(s.y1 - s.y0)), c);
+                    fillRect(buf.data, _width, _height, rx, ry, rw, rh, c);
                 }
                 break;
+            }
             }
         }
     }
 
     // Interactive menu (drawn last, on top; full opacity).
     if (_menuVisible && _menuW > 0) {
-        fillRect(buf.data, _width, _height, _menuX, _menuY, _menuW, _menuH, 0xE0000000);
-        drawBox(buf.data, _width, _height, _menuX, _menuY, _menuW, _menuH, 0xFFAAAAAA);
+        fillRoundedRect(buf.data, _width, _height, _menuX, _menuY, _menuW, _menuH,
+                        12.0f, 0xE0000000);
+        fillRoundedRectOutline(buf.data, _width, _height, _menuX, _menuY, _menuW, _menuH,
+                               12.0f, 1, 0xFFAAAAAA);
         drawText(buf.data, _width, _height, _menuX + kMenuPad, _menuY + kMenuPad, "Overlay", 0xFFFFFFFF);
 
         const int rx = _menuX + kMenuPad;
@@ -1273,6 +1333,10 @@ void WaylandOverlay::setLabelNames(const std::vector<std::string> &names) {
 void WaylandOverlay::setSourceSize(int w, int h) {
     _sourceW.store(w > 0 ? w : 0, std::memory_order_relaxed);
     _sourceH.store(h > 0 ? h : 0, std::memory_order_relaxed);
+}
+
+void WaylandOverlay::setAntiAlias(bool on) {
+    _antiAlias.store(on, std::memory_order_relaxed);
 }
 
 void WaylandOverlay::setWindowRect(int x, int y, int w, int h) {
